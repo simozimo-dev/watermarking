@@ -1,0 +1,49 @@
+# Variante con la conversione in PDF in un container separato (Gotenberg).
+# Si usa insieme al file principale:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.split.yml up -d --build
+#
+# Vantaggi: un crash o un file malevolo durante la conversione non tocca il portale,
+# l'immagine del portale non contiene LibreOffice (più leggera), la conversione si scala a parte.
+
+services:
+  watermarker:
+    build:
+      target: slim
+    image: watermarker:slim
+    environment:
+      Portal__ConverterUrl: http://converter:3000
+    depends_on:
+      converter:
+        condition: service_healthy
+
+  converter:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    expose:
+      - "3000"                      # raggiungibile solo dal portale
+    command:
+      - gotenberg
+      - --api-timeout=${CONVERSION_TIMEOUT_SECONDS:-120}s
+      - --api-body-limit=${MAX_BODY:-110MB}
+      - --libreoffice-restart-after=20     # riavvia LibreOffice periodicamente: memoria sotto controllo
+      - --log-level=warn
+    environment:
+      TZ: ${TZ:-Europe/Rome}
+    tmpfs:
+      - /tmp:size=${TMP_SIZE:-2g},mode=1777
+    volumes:
+      - ./fonts:/usr/local/share/fonts/custom:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${CONVERTER_CPU_LIMIT:-2}"
+          memory: ${CONVERTER_MEMORY_LIMIT:-2g}

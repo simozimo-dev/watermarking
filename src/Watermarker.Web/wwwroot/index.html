@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document Watermark</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='3' width='20' height='26' rx='2' fill='%23fff' stroke='%231d5e7e' stroke-width='2'/%3E%3Cpath d='M9 22 L23 10' stroke='%231d5e7e' stroke-width='3' stroke-linecap='round' opacity='.6'/%3E%3C/svg%3E">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <h1>Document watermark</h1>
+    <p>Upload a file, choose how the watermark should look, and download the marked copy. Files are not kept on the server.</p>
+  </header>
+
+  <main class="workspace">
+    <form id="form" class="controls" novalidate>
+      <fieldset class="step">
+        <legend>File</legend>
+        <label id="drop" class="drop" for="file">
+          <input id="file" name="file" type="file" required>
+          <span class="drop-title" id="drop-title">Drop a file here or choose one from your computer</span>
+          <span class="drop-hint" id="drop-hint">Documents, PDFs, images, ZIP archives, emails and videos</span>
+        </label>
+        <p id="format-note" class="note" hidden></p>
+      </fieldset>
+
+      <fieldset class="step">
+        <legend>Text</legend>
+        <label class="field">
+          <span>Watermark text <output id="lines-out"></output></span>
+          <textarea id="text" name="text" rows="2" maxlength="200" autocomplete="off" spellcheck="false" required>CONFIDENTIAL</textarea>
+        </label>
+        <p class="note">Press Enter to start a new line. You can insert
+          <button type="button" class="token" data-token="{date}">{date}</button>
+          <button type="button" class="token" data-token="{time}">{time}</button>
+          <button type="button" class="token" data-token="{filename}">{filename}</button>,
+          which are filled in when the file is processed.</p>
+      </fieldset>
+
+      <fieldset class="step">
+        <legend>Appearance</legend>
+        <div class="grid">
+          <label class="field">
+            <span>Angle <output for="angle" id="angle-out">45°</output></span>
+            <input id="angle" name="angle" type="range" min="-90" max="90" step="1" value="45">
+          </label>
+          <label class="field">
+            <span>Size <output for="size" id="size-out">60 pt</output></span>
+            <input id="size" name="size" type="range" min="12" max="200" step="1" value="60">
+          </label>
+          <label class="field">
+            <span>Opacity <output for="opacity" id="opacity-out">35%</output></span>
+            <input id="opacity" name="opacity" type="range" min="5" max="100" step="1" value="35">
+          </label>
+          <div class="field">
+            <span id="color-label">Color</span>
+            <div class="swatches" role="radiogroup" aria-labelledby="color-label">
+              <button type="button" class="swatch" data-color="#808080" aria-label="Gray"></button>
+              <button type="button" class="swatch" data-color="#C00000" aria-label="Red"></button>
+              <button type="button" class="swatch" data-color="#1F4E8C" aria-label="Blue"></button>
+              <button type="button" class="swatch" data-color="#000000" aria-label="Black"></button>
+              <label class="swatch custom" aria-label="Custom color">
+                <input id="color" name="color" type="color" value="#808080">
+              </label>
+            </div>
+          </div>
+          <label class="field wide">
+            <span>Font</span>
+            <select id="font" name="font"></select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset class="step">
+        <legend>Output</legend>
+        <div class="choice-group" role="radiogroup">
+          <label class="choice">
+            <input type="radio" name="output" value="original" checked>
+            <span><strong>Keep the format</strong> The document stays editable as before.</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="output" value="pdf">
+            <span><strong>Convert to PDF</strong> Useful for legacy formats or for sharing outside the company.</span>
+          </label>
+        </div>
+        <label class="check" id="tile-row">
+          <input id="tile" name="tile" type="checkbox">
+          <span>Repeat the watermark across the whole page</span>
+        </label>
+        <label class="check" id="slides-row" hidden>
+          <input id="pptxSlides" name="pptxSlides" type="checkbox">
+          <span>Also place the watermark on top of each slide's content</span>
+        </label>
+      </fieldset>
+
+      <div class="actions">
+        <button id="submit" type="submit" class="primary" disabled>Apply watermark and download</button>
+        <div id="progress" class="progress" hidden><span id="progress-bar"></span></div>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+      </div>
+    </form>
+
+    <section class="preview" aria-label="Preview">
+      <div class="lighttable">
+        <canvas id="canvas" width="600" height="848" role="img" aria-label="Watermark preview"></canvas>
+      </div>
+      <p id="preview-caption" class="caption">Approximate preview on an A4 page</p>
+    </section>
+  </main>
+</body>
+</html>

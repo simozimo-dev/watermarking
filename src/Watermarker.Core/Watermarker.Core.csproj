@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Watermarker.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- PDF: lettura/scrittura a basso livello (MIT) -->
+    <PackageReference Include="PDFsharp" Version="6.2.0" />
+    <!-- Word / Excel / PowerPoint (MIT) -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
+    <!-- Contorni dei glifi e rendering dei livelli trasparenti (MIT) -->
+    <PackageReference Include="SkiaSharp" Version="3.116.1" />
+    <!-- Librerie native per Linux; su Windows/macOS sono già incluse in SkiaSharp -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.116.1" />
+    <!-- Immagini: lettura/scrittura di PNG, JPEG, TIFF multipagina, GIF/WebP animati (Apache 2.0) -->
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="14.4.0" />
+    <!-- Email .eml (MIT) -->
+    <PackageReference Include="MimeKit" Version="4.9.0" />
+  </ItemGroup>
+
+</Project>

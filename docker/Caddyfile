@@ -1,0 +1,35 @@
+# Caddy: HTTPS davanti al portale.
+#
+# SITE_ADDRESS (nel file .env):
+#   localhost                  certificato locale di Caddy (avviso nel browser): solo per prove
+#   watermark.azienda.it       con DNS pubblico e porte 80/443 raggiungibili: certificato Let's Encrypt automatico
+#
+# Per un nome interno senza DNS pubblico usa il certificato aziendale: copia cert.pem e key.pem
+# in docker/certs e togli il commento alla riga "tls" qui sotto.
+
+{$SITE_ADDRESS:localhost} {
+	# tls /certs/cert.pem /certs/key.pem
+
+	# Deve essere un po' più grande di MAX_UPLOAD_MB (il multipart aggiunge qualche KB).
+	request_body {
+		max_size {$MAX_BODY:110MB}
+	}
+
+	reverse_proxy watermarker:8080 {
+		transport http {
+			# Le conversioni e soprattutto i video possono richiedere minuti.
+			read_timeout 35m
+			write_timeout 35m
+		}
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
