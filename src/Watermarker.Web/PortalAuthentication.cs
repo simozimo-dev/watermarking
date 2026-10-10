@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.Identity.Web;
 
 namespace Watermarker.Web;
@@ -48,7 +49,7 @@ public sealed record PortalUser(
 public static class PortalAuthentication
 {
     /// <summary>Percorsi accessibili senza login.</summary>
-    private static readonly string[] PublicPaths = ["/healthz", "/signed-out.html", "/app.css", "/favicon.ico"];
+    private static readonly string[] PublicPaths = ["/healthz", "/signed-out.html", "/sign-in-error.html", "/app.css", "/favicon.ico"];
 
     public static bool AddPortalAuthentication(this WebApplicationBuilder builder, PortalOptions portal)
     {
@@ -84,6 +85,26 @@ public static class PortalAuthentication
             o.TokenValidationParameters.NameClaimType = "name";
             o.TokenValidationParameters.RoleClaimType = "roles";
             o.SignedOutRedirectUri = "/signed-out.html";
+
+            // Authorization code flow: il token arriva dal back-channel con il client secret, non dal browser.
+            // Senza questa riga Microsoft.Identity.Web chiede "id_token" (flusso implicito), che Entra
+            // rifiuta con AADSTS700054 se nella registrazione non è spuntato "ID tokens".
+            o.ResponseType = OpenIdConnectResponseType.Code;
+
+            // Un errore durante il login (app non assegnata, consenso negato, configurazione errata)
+            // diventa una pagina comprensibile invece di un 500.
+            var previous = o.Events.OnRemoteFailure;
+            o.Events.OnRemoteFailure = async ctx =>
+            {
+                if (previous is not null) await previous(ctx);
+                if (ctx.Result is not null) return;
+
+                ctx.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("Watermarker.Web.Auth")
+                    .LogWarning(ctx.Failure, "Sign-in failed");
+                ctx.Response.Redirect("/sign-in-error.html");
+                ctx.HandleResponse();
+            };
         });
 
         builder.Services.Configure<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme, o =>
