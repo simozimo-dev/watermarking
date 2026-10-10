@@ -1,0 +1,96 @@
+# Stack del portale dietro un Caddy condiviso (rete "edge"), con conversione in PDF via Gotenberg.
+# Da copiare sul server (es. /opt/stack/watermark) insieme a .env.
+#
+# Prerequisiti:
+#   - rete condivisa:       docker network create edge
+#   - codice sorgente in:   /opt/src/watermarking   (adatta "context" se è altrove)
+#
+# Avvio / aggiornamento:   docker compose up -d --build
+
+name: watermarker
+
+services:
+  watermarker:
+    build:
+      context: /opt/src/watermarking
+      target: slim                       # senza LibreOffice: la conversione la fa "converter"
+    image: watermarker:slim
+    pull_policy: build                   # immagine locale: non cercarla su Docker Hub
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"   # schema e IP originali inoltrati da Caddy
+      Portal__ConverterUrl: http://converter:3000
+      Portal__MaxUploadMb: ${MAX_UPLOAD_MB:-100}
+      Portal__MaxConcurrentJobs: ${MAX_CONCURRENT_JOBS:-2}
+      Portal__QueueLimit: ${QUEUE_LIMIT:-20}
+      Portal__MaxFilesPerBatch: ${MAX_FILES_PER_BATCH:-20}
+      Portal__ConversionTimeoutSeconds: ${CONVERSION_TIMEOUT_SECONDS:-120}
+      Portal__VideoTimeoutMinutes: ${VIDEO_TIMEOUT_MINUTES:-30}
+      # Login con Microsoft Entra ID (vuoti = login disattivato)
+      AzureAd__TenantId: ${AZUREAD_TENANT_ID:-}
+      AzureAd__ClientId: ${AZUREAD_CLIENT_ID:-}
+      AzureAd__ClientSecret: ${AZUREAD_CLIENT_SECRET:-}
+      Portal__RequiredRole: ${REQUIRED_ROLE:-}
+      Portal__SessionHours: ${SESSION_HOURS:-8}
+      TZ: ${TZ:-Europe/Rome}                        # per {date} e {time}
+    read_only: true
+    tmpfs:
+      - /tmp:size=${TMP_SIZE:-2g},mode=1777         # unico spazio scrivibile per i documenti, in RAM
+    volumes:
+      - ./fonts:/usr/share/fonts/custom:ro          # font con licenza, facoltativi
+      - keys:/data/keys                             # chiavi dei cookie di sessione: sopravvivono ai riavvii
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-2}"
+          memory: ${MEMORY_LIMIT:-3g}
+    depends_on:
+      - converter
+    networks:
+      edge:
+        aliases: [watermarker]                      # nome con cui lo raggiunge Caddy
+      backend: {}
+
+  converter:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    command:
+      - gotenberg
+      - --api-timeout=${CONVERSION_TIMEOUT_SECONDS:-120}s
+      - --api-body-limit=${MAX_BODY:-110MB}
+      - --libreoffice-restart-after=20
+      - --log-level=warn
+    environment:
+      TZ: ${TZ:-Europe/Rome}
+    tmpfs:
+      - /tmp:size=${TMP_SIZE:-2g},mode=1777
+    volumes:
+      - ./fonts:/usr/local/share/fonts/custom:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${CONVERTER_CPU_LIMIT:-2}"
+          memory: ${CONVERTER_MEMORY_LIMIT:-2g}
+    networks:
+      - backend                                     # solo interna: non raggiungibile da Caddy né da Internet
+
+networks:
+  edge:
+    external: true
+  backend:
+    internal: true
+
+volumes:
+  keys:

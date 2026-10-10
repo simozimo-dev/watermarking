@@ -1,23 +1,75 @@
+# Watermarker - installazione standard
+#
+#   cp .env.example .env      (poi adatta i valori)
+#   docker compose up -d --build
+#
+# Servizi:
+#   proxy        Caddy: HTTPS e unico punto esposto all'esterno
+#   watermarker  portale + motore, con LibreOffice e FFmpeg (immagine "full")
+#
+# Per spostare la conversione in PDF in un container separato vedi docker-compose.split.yml.
+
 name: watermarker
+
 services:
-  watermarker:
-    image: watermarker:full             # meglio da registry: registro/watermarker:1.0.0
+  proxy:
+    image: caddy:2
     restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
     environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      MAX_BODY: ${MAX_BODY:-110MB}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./docker/certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      watermarker:
+        condition: service_healthy
+
+  watermarker:
+    build:
+      context: .
+      target: full
+    image: watermarker:full
+    restart: unless-stopped
+    expose:
+      - "8080"                      # raggiungibile solo dal proxy, non dall'esterno
+    environment:
+      # Il proxy inoltra schema e IP originali (serve anche per il login con Entra ID).
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
-      # ... come nel compose attuale
-    # read_only, tmpfs, cap_drop, limiti: come nel compose attuale
-    networks:
-      edge:
-        aliases: [watermarker]          # il nome con cui lo trova Caddy
-      backend: {}
+      Portal__MaxUploadMb: ${MAX_UPLOAD_MB:-100}
+      Portal__MaxConcurrentJobs: ${MAX_CONCURRENT_JOBS:-2}
+      Portal__QueueLimit: ${QUEUE_LIMIT:-20}
+      Portal__ConversionTimeoutSeconds: ${CONVERSION_TIMEOUT_SECONDS:-120}
+      Portal__VideoTimeoutMinutes: ${VIDEO_TIMEOUT_MINUTES:-30}
+      TZ: ${TZ:-Europe/Rome}        # per {date} e {time}
+      # Login con Microsoft Entra ID (vuoti = login disattivato)
+      AzureAd__TenantId: ${AZUREAD_TENANT_ID:-}
+      AzureAd__ClientId: ${AZUREAD_CLIENT_ID:-}
+      AzureAd__ClientSecret: ${AZUREAD_CLIENT_SECRET:-}
+      Portal__RequiredRole: ${REQUIRED_ROLE:-}
+    # Hardening: il container elabora file caricati dagli utenti.
+    read_only: true
+    tmpfs:
+      - /tmp:size=${TMP_SIZE:-2g},mode=1777   # unico spazio scrivibile: i documenti non toccano mai il disco
+    volumes:
+      - ./fonts:/usr/share/fonts/custom:ro    # font con licenza (Arial, Calibri...), facoltativi
+      - keys:/data/keys                       # chiavi dei cookie di sessione: sopravvivono ai riavvii
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-2}"
+          memory: ${MEMORY_LIMIT:-3g}
 
-  converter:                            # solo nella variante con Gotenberg
-    image: gotenberg/gotenberg:8
-    networks: [backend]                 # non è su edge: Caddy e app2 non lo vedono
-
-networks:
-  edge:
-    external: true
-  backend:
-    internal: true                      # nessun accesso a Internet
+volumes:
+  keys:           # chiavi Data Protection del portale
+  caddy_data:     # certificati emessi da Caddy
+  caddy_config:

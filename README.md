@@ -88,13 +88,11 @@ per nome e lo applica il PC che apre il file); in PDF, XPS, immagini e video il 
 con il sostituto. Per usare i font originali, se l'azienda ne ha la licenza, basta copiarli in `fonts/`
 e riavviare.
 
-### Note per l'autenticazione con Entra ID (fase successiva)
+### Stack per un Caddy condiviso
 
-- `ASPNETCORE_FORWARDEDHEADERS_ENABLED` è già attivo: il portale vede `https` e l'IP reale dietro Caddy,
-  necessario per il redirect URI del login.
-- Con il login servirà un volume per le chiavi di Data Protection (cookie di sessione), altrimenti a ogni
-  riavvio gli utenti dovranno rifare l'accesso; con più repliche le chiavi vanno condivise.
-- Il certificato dell'app registrata va passato come *secret* di Docker, non nell'immagine.
+`deploy/watermarker/` contiene lo stack da usare quando Caddy è in uno stack separato (rete `edge`),
+con Gotenberg e il login Entra ID: copia `docker-compose.yml` e `.env.example` (rinominato `.env`) nella
+cartella dello stack sul server.
 
 ## Formati
 
@@ -138,8 +136,8 @@ file già cifrati da Purview (vanno elaborati prima dell'etichettatura).
 | PowerPoint sopra le slide | `--pptx-slides` | sì | no |
 | Conversione in PDF | `--to-pdf` | sì | no |
 
-**Segnaposto nel testo:** `{date}`, `{time}`, `{filename}`, `{user}` (accettati anche `{data}`, `{ora}`, `{nomefile}`, `{utente}`). Nel portale `{user}` resta vuoto
-finché non si aggiunge l'autenticazione; nella CLI è l'utente di Windows.
+**Segnaposto nel testo:** `{date}`, `{time}`, `{filename}`, `{user}`, `{email}` (accettati anche `{data}`, `{ora}`, `{nomefile}`, `{utente}`). Nel portale `{user}` e `{email}`
+vengono dall'account Entra ID (vuoti se il login è disattivato); nella CLI `{user}` è l'utente di Windows.
 
 **Più righe:** le righe sono centrate una sotto l'altra e ruotano insieme. In Word e OpenDocument
 ogni riga è una scritta separata (WordArt/Fontwork allargherebbero le righe corte alla larghezza della
@@ -157,9 +155,10 @@ in .pdf viene trattato come Word, e il portale lo segnala tra gli avvisi.
 
 - `GET /healthz`: controllo di salute (usato da Docker).
 - `GET /api/capabilities`: formati disponibili, limiti e caratteri.
+- `GET /api/me`: utente autenticato (nome, email, ruoli, ora di accesso).
 - `POST /api/watermark` (multipart/form-data): campi `file`, `text`, `angle`, `size`, `color` (#RRGGBB),
   `opacity` (0-1), `font`, `output` (`original` | `pdf`), `tile`, `pptxSlides`.
-  La risposta è il file. Gli avvisi arrivano nell'intestazione `X-Watermark-Warnings`
+  Richiede l'header `X-Requested-With: watermarker` (protezione CSRF). La risposta è il file. Gli avvisi arrivano nell'intestazione `X-Watermark-Warnings`
   (array JSON in Base64); gli errori sono in formato ProblemDetails.
 
 ### Configurazione (`appsettings.json`, sezione `Portal`)
@@ -186,11 +185,47 @@ Sotto **IIS** va alzato anche `maxAllowedContentLength` in web.config, altriment
 - Intestazioni di sicurezza (CSP, X-Frame-Options, nosniff) e nessuna risorsa esterna nella pagina.
 - Ogni elaborazione viene registrata nel log (file, formato, IP, durata).
 
-### Aggiungere l'autenticazione
+### Accesso con Microsoft Entra ID
 
-Il portale è già predisposto: `{user}` viene riempito con `HttpContext.User.Identity.Name`.
-Per Microsoft Entra ID bastano il pacchetto `Microsoft.Identity.Web`, la configurazione `AzureAd`, e
-`.RequireAuthorization()` sugli endpoint e sui file statici.
+Il login si attiva da solo quando sono configurati `AzureAd:TenantId`, `AzureAd:ClientId` e
+`AzureAd:ClientSecret` (in Docker: `AZUREAD_TENANT_ID`, `AZUREAD_CLIENT_ID`, `AZUREAD_CLIENT_SECRET`).
+Senza, il portale funziona senza login e la pagina lo segnala ("development mode").
+
+Con il login attivo:
+- tutto il portale richiede l'accesso, tranne `/healthz` e la pagina di uscita;
+- in alto a destra compaiono nome, email, ruoli e ora di accesso, con il pulsante **Sign out**;
+- `{user}` (nome) e `{email}` (UPN) nel testo del watermark vengono dal token di Entra ID e non sono falsificabili;
+- ogni elaborazione è registrata nel log con UPN e object ID dell'utente;
+- con `Portal:RequiredRole` (es. `Watermark.User`) solo chi ha quel ruolo dell'app può usare il portale.
+
+**Registrazione dell'app** (Entra admin center → *Identity → Applications → App registrations*):
+
+1. *New registration*: nome "Watermark portal", *Accounts in this organizational directory only*,
+   Redirect URI di tipo **Web**: `https://<nome-del-portale>/signin-oidc`.
+2. *Authentication*: aggiungi anche `https://<nome-del-portale>/signout-callback-oidc` tra i Redirect URI
+   (serve per tornare al portale dopo il logout). Non serve attivare "ID tokens" né "Access tokens".
+3. *Certificates & secrets → New client secret*: copia il **Value** in `AZUREAD_CLIENT_SECRET`.
+   Annota la scadenza: alla scadenza il login smette di funzionare finché non si crea un nuovo segreto.
+4. *Overview*: copia **Directory (tenant) ID** e **Application (client) ID**.
+5. Facoltativo, ruoli: *App roles → Create app role* con valore `Watermark.User`, membri "Users/Groups";
+   poi imposta `REQUIRED_ROLE=Watermark.User`.
+6. *Enterprise applications* → la stessa app → *Properties*: **Assignment required = Yes**;
+   *Users and groups*: assegna gli utenti o i gruppi (con il ruolo, se l'hai creato).
+   L'assegnazione di gruppi richiede Entra ID P1.
+
+Poi `docker compose up -d` nella cartella dello stack. Le chiavi che proteggono i cookie di sessione sono
+nel volume `keys`: senza quel volume gli utenti devono rifare l'accesso a ogni riavvio del container.
+
+Dietro Tailscale il login funziona senza aprire porte: il passaggio da Entra ID avviene nel browser
+dell'utente, che è già nella tailnet.
+
+## Più file insieme
+
+Si possono selezionare o trascinare fino a `Portal:MaxFilesPerBatch` file (default 20). La pagina li invia
+uno alla volta, mostra lo stato di ognuno (in coda, in elaborazione, fatto, fallito), e alla fine:
+un file viene scaricato direttamente, più file in un unico archivio ZIP. Ogni file resta scaricabile anche
+singolarmente dalla lista, e quelli falliti si possono rielaborare. L'anteprima mostra il file selezionato
+nella lista.
 
 ## Limiti
 

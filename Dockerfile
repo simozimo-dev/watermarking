@@ -32,12 +32,16 @@ RUN apt-get update \
 COPY docker/fonts.conf /etc/fonts/local.conf
 RUN mkdir -p /usr/share/fonts/custom && fc-cache -f
 
+# Chiavi Data Protection (cookie di sessione): da montare su un volume persistente.
+RUN mkdir -p /data/keys && chown app:app /data/keys
+
 WORKDIR /app
 COPY --from=build /app .
 
 # HOME e cache in /tmp: il container può girare con il filesystem in sola lettura.
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     Portal__WorkDirectory=/tmp/watermarker \
+    Portal__DataProtectionPath=/data/keys \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache
 

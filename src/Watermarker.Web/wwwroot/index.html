@@ -10,20 +10,27 @@
 </head>
 <body>
   <header class="masthead">
-    <h1>Document watermark</h1>
-    <p>Upload a file, choose how the watermark should look, and download the marked copy. Files are not kept on the server.</p>
+    <div class="masthead-text">
+      <h1>Document watermark</h1>
+      <p>Upload one or more files, choose how the watermark should look, and download the marked copies. Files are not kept on the server.</p>
+    </div>
+    <div id="user" class="user" hidden aria-label="Signed-in user"></div>
   </header>
 
   <main class="workspace">
     <form id="form" class="controls" novalidate>
       <fieldset class="step">
-        <legend>File</legend>
+        <legend>Files</legend>
         <label id="drop" class="drop" for="file">
-          <input id="file" name="file" type="file" required>
-          <span class="drop-title" id="drop-title">Drop a file here or choose one from your computer</span>
+          <input id="file" name="file" type="file" multiple>
+          <span class="drop-title" id="drop-title">Drop files here or choose them from your computer</span>
           <span class="drop-hint" id="drop-hint">Documents, PDFs, images, ZIP archives, emails and videos</span>
         </label>
-        <p id="format-note" class="note" hidden></p>
+        <div class="file-head">
+          <p id="file-summary" class="note" hidden></p>
+          <button id="clear-files" type="button" class="link" hidden>Remove all</button>
+        </div>
+        <ul id="file-list" class="file-list" hidden aria-label="Selected files"></ul>
       </fieldset>
 
       <fieldset class="step">
@@ -35,7 +42,9 @@
         <p class="note">Press Enter to start a new line. You can insert
           <button type="button" class="token" data-token="{date}">{date}</button>
           <button type="button" class="token" data-token="{time}">{time}</button>
-          <button type="button" class="token" data-token="{filename}">{filename}</button>,
+          <button type="button" class="token" data-token="{filename}">{filename}</button>
+          <button type="button" class="token token-auth" data-token="{user}" hidden>{user}</button>
+          <button type="button" class="token token-auth" data-token="{email}" hidden>{email}</button>,
           which are filled in when the file is processed.</p>
       </fieldset>
 

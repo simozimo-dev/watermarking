@@ -37,6 +37,21 @@ public sealed class PortalOptions
     /// <summary>Cartella per i file temporanei. Default: cartella temporanea di sistema.</summary>
     public string? WorkDirectory { get; set; }
 
+    /// <summary>Numero massimo di file selezionabili insieme nella pagina.</summary>
+    public int MaxFilesPerBatch { get; set; } = 20;
+
+    /// <summary>
+    /// Ruolo dell'app (Entra ID) richiesto per usare il portale, es. "Watermark.User".
+    /// Vuoto = basta essere autenticati (e assegnati all'app, se l'assegnazione è obbligatoria).
+    /// </summary>
+    public string? RequiredRole { get; set; }
+
+    /// <summary>Durata della sessione, rinnovata a ogni utilizzo.</summary>
+    public int SessionHours { get; set; } = 8;
+
+    /// <summary>Cartella persistente per le chiavi che proteggono i cookie di sessione.</summary>
+    public string? DataProtectionPath { get; set; }
+
     public int ConversionTimeoutSeconds { get; set; } = 120;
     public int VideoTimeoutMinutes { get; set; } = 30;
 }

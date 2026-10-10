@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.StaticFiles;
@@ -44,6 +45,9 @@ builder.Services.AddRateLimiter(o =>
     });
 });
 
+// Login con Entra ID: attivo solo se la sezione "AzureAd" è configurata.
+bool authEnabled = builder.AddPortalAuthentication(portal);
+
 var app = builder.Build();
 
 app.Use(async (ctx, next) =>
@@ -55,6 +59,9 @@ app.Use(async (ctx, next) =>
     h["Content-Security-Policy"] = "default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'";
     await next();
 });
+
+if (authEnabled) app.UsePortalAuthentication(portal);
+else app.Logger.LogWarning("Authentication is DISABLED: configure the AzureAd section to require Entra ID sign-in.");
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -73,15 +80,43 @@ app.MapGet("/api/capabilities", (WatermarkEngine engine, PortalOptions options) 
     maxUploadBytes = maxBodyBytes,
     maxTextLength = options.MaxTextLength,
     maxLines = WatermarkOptions.MaxLines,
+    maxFiles = Math.Max(1, options.MaxFilesPerBatch),
     fonts = options.EffectiveFonts,
     placeholders = TextTemplate.Placeholders,
 }));
+
+// Utente collegato, mostrato nella pagina.
+app.MapGet("/api/me", async (HttpContext http) =>
+{
+    if (!authEnabled) return Results.Ok(new { authEnabled = false });
+
+    var user = PortalUser.From(http.User);
+    var session = await http.AuthenticateAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok(new
+    {
+        authEnabled = true,
+        name = user?.Name,
+        username = user?.Username,
+        objectId = user?.ObjectId,
+        tenantId = user?.TenantId,
+        roles = user?.Roles ?? [],
+        signedInAt = session.Properties?.IssuedUtc,
+        sessionExpiresAt = session.Properties?.ExpiresUtc,
+        signOutUrl = "/auth/signout",
+    });
+});
 
 app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, PortalOptions options,
                                      ILogger<Program> log, CancellationToken ct) =>
 {
     if (!http.Request.HasFormContentType)
         return Problem(400, "Invalid request", "Send the file as multipart/form-data.");
+
+    // Protezione CSRF: un form di un altro sito non può aggiungere header personalizzati.
+    if (http.Request.Headers["X-Requested-With"] != "watermarker")
+        return Problem(400, "Invalid request", "Missing request header.");
+
+    var user = authEnabled ? PortalUser.From(http.User) : null;
 
     IFormCollection form;
     try
@@ -97,7 +132,7 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
     if (file is null || file.Length == 0)
         return Problem(400, "No file", "Choose the file to watermark.");
 
-    if (!TryReadOptions(form, options, file.FileName, http.User.Identity?.Name, out var wmOptions, out var mode, out var error))
+    if (!TryReadOptions(form, options, file.FileName, user, out var wmOptions, out var mode, out var error))
         return Problem(400, "Invalid settings", error);
 
     var jobs = Path.Combine(engine.Settings.WorkDirectory, "jobs");
@@ -118,9 +153,9 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
         var result = await Task.Run(() => engine.Process(input, output, wmOptions, mode, file.FileName), ct);
 
         log.LogInformation(
-            "Watermark applied: {File} ({Size} bytes, {Format}, output {Mode}) from {Client} in {Ms} ms, {Warnings} warnings",
-            file.FileName, file.Length, format.Description, mode, http.Connection.RemoteIpAddress, sw.ElapsedMilliseconds,
-            result.Warnings.Count);
+            "Watermark applied: {File} ({Size} bytes, {Format}, output {Mode}) by {User} ({ObjectId}) from {Client} in {Ms} ms, {Warnings} warnings",
+            file.FileName, file.Length, format.Description, mode, user?.Username ?? "anonymous", user?.ObjectId,
+            http.Connection.RemoteIpAddress, sw.ElapsedMilliseconds, result.Warnings.Count);
 
         http.Response.Headers["X-Watermark-Warnings"] =
             Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(result.Warnings));
@@ -167,7 +202,7 @@ app.Run();
 
 // ---------------------------------------------------------------- funzioni di supporto
 
-static bool TryReadOptions(IFormCollection form, PortalOptions portal, string fileName, string? user,
+static bool TryReadOptions(IFormCollection form, PortalOptions portal, string fileName, PortalUser? user,
                            out WatermarkOptions options, out OutputMode mode, out string error)
 {
     options = null!;
@@ -197,7 +232,8 @@ static bool TryReadOptions(IFormCollection form, PortalOptions portal, string fi
 
     mode = form["output"].ToString() == "pdf" ? OutputMode.Pdf : OutputMode.Original;
 
-    var expanded = TextTemplate.Expand(text, fileName, user);
+    // {user} ed {email} vengono dal token di Entra ID: l'utente non può falsificarli.
+    var expanded = TextTemplate.Expand(text, fileName, user?.Name, email: user?.Username);
     if (expanded.Length == 0) { error = "The watermark text is empty after replacing the placeholders."; return false; }
 
     options = new WatermarkOptions

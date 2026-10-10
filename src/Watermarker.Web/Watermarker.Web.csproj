@@ -9,6 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Login con Microsoft Entra ID (OpenID Connect) -->
+    <PackageReference Include="Microsoft.Identity.Web" Version="3.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Watermarker.Core\Watermarker.Core.csproj" />
   </ItemGroup>
 
