@@ -1,13 +1,10 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.AspNetCore.StaticFiles;
 using System.Threading.RateLimiting;
 using Watermarker.Core;
-using Watermarker.Core.Formats;
 using Watermarker.Web;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,6 +25,32 @@ builder.Services.AddSingleton(_ => new WatermarkEngine(new EngineSettings
     VideoTimeout = TimeSpan.FromMinutes(portal.VideoTimeoutMinutes),
 }));
 builder.Services.AddHostedService<JobCleanup>();
+
+// API per le altre applicazioni: token creati dall'amministratore, lavori sincroni e asincroni.
+var api = builder.Configuration.GetSection("Api").Get<ApiOptions>() ?? new ApiOptions();
+builder.Services.AddSingleton(api);
+if (api.Enabled)
+{
+    var appData = Path.Combine(builder.Environment.ContentRootPath, "App_Data");
+    var tokensPath = NullIfEmpty(api.DataPath) ?? Path.Combine(appData, "api");
+    var jobsPath = NullIfEmpty(api.JobsPath) ?? Path.Combine(appData, "jobs");
+
+    builder.Services.AddSingleton(sp => new ApiTokenStore(tokensPath, sp.GetRequiredService<ILogger<ApiTokenStore>>()));
+    builder.Services.AddSingleton(sp =>
+    {
+        var log = sp.GetRequiredService<ILogger<ApiJobStore>>();
+        var root = jobsPath;
+        if (!Storage.IsWritable(root))
+        {
+            root = Path.Combine(Path.GetTempPath(), "watermarker", "api-jobs");
+            log.LogWarning("API job folder '{Path}' is not writable (missing volume?): using {Fallback}.", jobsPath, root);
+        }
+        return new ApiJobStore(root, log);
+    });
+    builder.Services.AddSingleton<ApiRateLimiter>();
+    builder.Services.AddHostedService<ApiJobWorker>();
+    builder.Services.AddHostedService<ApiMaintenance>();
+}
 
 // Limiti di dimensione: Kestrel e parser multipart (sotto IIS va impostato anche maxAllowedContentLength).
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = maxBodyBytes + 1024 * 1024);
@@ -63,6 +86,14 @@ app.Use(async (ctx, next) =>
 if (authEnabled) app.UsePortalAuthentication(portal);
 else app.Logger.LogWarning("Authentication is DISABLED: configure the AzureAd section to require Entra ID sign-in.");
 
+if (api.Enabled)
+{
+    app.UseApiTokens();
+    // Crea subito archivio dei token e coda, così un problema di configurazione emerge all'avvio.
+    _ = app.Services.GetRequiredService<ApiTokenStore>();
+    _ = app.Services.GetRequiredService<ApiJobStore>();
+}
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRateLimiter();
@@ -88,7 +119,8 @@ app.MapGet("/api/capabilities", (WatermarkEngine engine, PortalOptions options) 
 // Utente collegato, mostrato nella pagina.
 app.MapGet("/api/me", async (HttpContext http) =>
 {
-    if (!authEnabled) return Results.Ok(new { authEnabled = false });
+    bool isAdmin = api.Enabled && AdminEndpoints.IsAdmin(http, authEnabled, portal, app.Environment);
+    if (!authEnabled) return Results.Ok(new { authEnabled = false, isAdmin });
 
     var user = PortalUser.From(http.User);
     var session = await http.AuthenticateAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
@@ -103,6 +135,7 @@ app.MapGet("/api/me", async (HttpContext http) =>
         signedInAt = session.Properties?.IssuedUtc,
         sessionExpiresAt = session.Properties?.ExpiresUtc,
         signOutUrl = "/auth/signout",
+        isAdmin,
     });
 });
 
@@ -132,7 +165,10 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
     if (file is null || file.Length == 0)
         return Problem(400, "No file", "Choose the file to watermark.");
 
-    if (!TryReadOptions(form, options, file.FileName, user, out var wmOptions, out var mode, out var error))
+    // {user} ed {email} vengono dal token di Entra ID: l'utente non può falsificarli.
+    var identity = new WatermarkIdentity(user?.Name, user?.Username);
+    if (!Processing.TryReadOptions(form, options, file.FileName, identity, fixedText: null,
+                                   out var wmOptions, out var mode, out var error))
         return Problem(400, "Invalid settings", error);
 
     var jobs = Path.Combine(engine.Settings.WorkDirectory, "jobs");
@@ -146,49 +182,30 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
         await using (var fs = File.Create(input))
             await file.CopyToAsync(fs, ct);
 
-        var format = engine.Detect(input, file.FileName);
-        var downloadName = WatermarkEngine.SuggestOutputName(file.FileName, format, mode);
-        var output = Path.Combine(jobs, id + ".out" + Path.GetExtension(downloadName));
-
-        var result = await Task.Run(() => engine.Process(input, output, wmOptions, mode, file.FileName), ct);
+        var outcome = await Processing.RunAsync(engine, input, file.FileName, Path.Combine(jobs, id + ".out"), wmOptions, mode, ct);
 
         log.LogInformation(
             "Watermark applied: {File} ({Size} bytes, {Format}, output {Mode}) by {User} ({ObjectId}) from {Client} in {Ms} ms, {Warnings} warnings",
-            file.FileName, file.Length, format.Description, mode, user?.Username ?? "anonymous", user?.ObjectId,
-            http.Connection.RemoteIpAddress, sw.ElapsedMilliseconds, result.Warnings.Count);
+            file.FileName, file.Length, outcome.Format, mode, user?.Username ?? "anonymous", user?.ObjectId,
+            http.Connection.RemoteIpAddress, sw.ElapsedMilliseconds, outcome.Warnings.Count);
 
+        http.Response.Headers["X-Watermark-Id"] = id;
         http.Response.Headers["X-Watermark-Warnings"] =
-            Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(result.Warnings));
-        http.Response.Headers["X-Watermark-Format"] = Uri.EscapeDataString(format.Description);
+            Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(outcome.Warnings));
+        http.Response.Headers["X-Watermark-Format"] = Uri.EscapeDataString(outcome.Format);
 
         // Il file viene cancellato appena il download è terminato.
-        var stream = new FileStream(output, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
-                                    81920, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
-        return Results.File(stream, ContentType(downloadName), downloadName);
+        return Results.File(Processing.OpenAndDeleteOnClose(outcome.OutputPath), outcome.ContentType, outcome.DownloadName);
     }
     catch (OperationCanceledException) when (ct.IsCancellationRequested)
     {
         return Results.Empty;
     }
-    catch (NotSupportedException ex)
-    {
-        return Problem(415, "Unsupported format", ex.Message);
-    }
-    catch (Exception ex) when (ex is InvalidDataException or FormatException or ArgumentException)
-    {
-        log.LogWarning(ex, "File could not be processed: {File}", file.FileName);
-        return Problem(422, "File could not be processed", ex.Message);
-    }
-    catch (TimeoutException ex)
-    {
-        log.LogWarning(ex, "Timeout on {File}", file.FileName);
-        return Problem(504, "Processing took too long", ex.Message);
-    }
     catch (Exception ex)
     {
-        log.LogError(ex, "Error processing {File}", file.FileName);
-        return Problem(500, "Processing failed",
-            "The file may be damaged or password-protected. Details are in the server log.");
+        var (status, title, detail) = Processing.Classify(ex);
+        Processing.LogFailure(log, ex, status, file.FileName);
+        return Problem(status, title, detail);
     }
     finally
     {
@@ -198,70 +215,16 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
 .DisableAntiforgery()
 .RequireRateLimiting("processing");
 
+if (api.Enabled)
+{
+    app.MapApiV1();
+    app.MapAdmin(authEnabled, portal);
+}
+
 app.Run();
 
 // ---------------------------------------------------------------- funzioni di supporto
 
-static bool TryReadOptions(IFormCollection form, PortalOptions portal, string fileName, PortalUser? user,
-                           out WatermarkOptions options, out OutputMode mode, out string error)
-{
-    options = null!;
-    mode = OutputMode.Original;
-    error = "";
-
-    // Testo su più righe: a capo normalizzati, righe vuote ignorate.
-    var text = form["text"].ToString().Replace("\r\n", "\n").Replace('\r', '\n').Trim();
-    if (text.Length == 0) { error = "Enter the watermark text."; return false; }
-    if (text.Length > portal.MaxTextLength) { error = $"The text can be at most {portal.MaxTextLength} characters long."; return false; }
-
-    if (text.Split('\n').Count(l => l.Trim().Length > 0) > WatermarkOptions.MaxLines)
-    { error = $"The watermark can have at most {WatermarkOptions.MaxLines} lines."; return false; }
-
-    if (!TryNumber(form["angle"], -360, 360, 45, out var angle)) { error = "Invalid angle."; return false; }
-    if (!TryNumber(form["size"], 4, 400, 60, out var size)) { error = "Invalid size (4-400 points)."; return false; }
-    if (!TryNumber(form["opacity"], 0.05, 1, 0.35, out var opacity)) { error = "Invalid opacity."; return false; }
-
-    RgbaColor color;
-    try { color = RgbaColor.Parse(form["color"].ToString() is { Length: > 0 } c ? c : "#808080").WithOpacity(opacity); }
-    catch (FormatException ex) { error = ex.Message; return false; }
-
-    var font = form["font"].ToString();
-    var fonts = portal.EffectiveFonts;
-    if (string.IsNullOrEmpty(font)) font = fonts[0];
-    if (!fonts.Contains(font, StringComparer.OrdinalIgnoreCase)) { error = "Font not available."; return false; }
-
-    mode = form["output"].ToString() == "pdf" ? OutputMode.Pdf : OutputMode.Original;
-
-    // {user} ed {email} vengono dal token di Entra ID: l'utente non può falsificarli.
-    var expanded = TextTemplate.Expand(text, fileName, user?.Name, email: user?.Username);
-    if (expanded.Length == 0) { error = "The watermark text is empty after replacing the placeholders."; return false; }
-
-    options = new WatermarkOptions
-    {
-        Text = expanded,
-        AngleDegrees = angle,
-        FontSize = size,
-        Color = color,
-        Font = font,
-        Tile = IsOn(form["tile"]),
-        PowerPointOnSlides = IsOn(form["pptxSlides"]),
-    };
-    return true;
-}
-
-static bool TryNumber(string? value, double min, double max, double fallback, out double result)
-{
-    if (string.IsNullOrWhiteSpace(value)) { result = fallback; return true; }
-    return double.TryParse(value.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out result)
-           && result >= min && result <= max;
-}
-
 static string? NullIfEmpty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-static bool IsOn(string? value) => value is "true" or "on" or "1";
-
-static string ContentType(string fileName) =>
-    new FileExtensionContentTypeProvider().TryGetContentType(fileName, out var ct) ? ct : "application/octet-stream";
-
-static IResult Problem(int status, string title, string detail) =>
-    Results.Problem(statusCode: status, title: title, detail: detail);
+static IResult Problem(int status, string title, string detail) => Processing.Problem(status, title, detail);

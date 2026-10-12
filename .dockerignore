@@ -7,3 +7,5 @@ docker-compose*.yml
 .env
 *.pdf
 *.docx
+**/App_Data/
+tools/

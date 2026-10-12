@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API tokens · Document Watermark</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='3' width='20' height='26' rx='2' fill='%23fff' stroke='%231d5e7e' stroke-width='2'/%3E%3Cpath d='M9 22 L23 10' stroke='%231d5e7e' stroke-width='3' stroke-linecap='round' opacity='.6'/%3E%3C/svg%3E">
+  <script src="admin.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-text">
+      <p class="crumb"><a href="./">← Watermark portal</a></p>
+      <h1>API tokens</h1>
+      <p>Tokens let other applications call the watermark API. Create one token per application, so you can limit, rotate or revoke it on its own.</p>
+    </div>
+  </header>
+
+  <main class="admin">
+    <div class="admin-bar">
+      <p id="summary" class="note"></p>
+      <button id="new-token" type="button" class="primary compact" disabled>New token</button>
+    </div>
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <div class="table-wrap">
+      <table class="tokens">
+        <thead>
+          <tr>
+            <th scope="col">Application</th>
+            <th scope="col">Status</th>
+            <th scope="col">Expires</th>
+            <th scope="col">Last used</th>
+            <th scope="col">Access</th>
+            <th scope="col"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p id="empty" class="empty" hidden>No tokens yet. Create one for each application that needs to call the API.</p>
+    </div>
+
+    <section class="howto" aria-labelledby="howto-title">
+      <h2 id="howto-title">Calling the API</h2>
+      <p>Send the token in the <code>Authorization</code> header. The synchronous call returns the watermarked file directly:</p>
+      <pre id="example-sync"></pre>
+      <p>For videos, large files or batches, queue a job, check its status, then download the result:</p>
+      <pre id="example-async"></pre>
+      <p>Full reference: <a id="openapi-link" href="api/v1/openapi.yaml">OpenAPI description</a>.</p>
+    </section>
+  </main>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="token-form" novalidate>
+      <h2 id="editor-title">New token</h2>
+
+      <label class="field">
+        <span>Application name</span>
+        <input id="f-name" type="text" maxlength="100" required autocomplete="off" placeholder="e.g. SharePoint archive flow">
+      </label>
+      <label class="field">
+        <span>Description <em>optional</em></span>
+        <input id="f-description" type="text" maxlength="500" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Owner contact <em>optional</em></span>
+        <input id="f-contact" type="text" maxlength="200" autocomplete="off" placeholder="team or person to contact about this token">
+      </label>
+
+      <div class="grid">
+        <label class="field">
+          <span>Expires</span>
+          <select id="f-expiry"></select>
+        </label>
+        <label class="field" id="custom-date-field" hidden>
+          <span>Expiry date</span>
+          <input id="f-date" type="date">
+        </label>
+      </div>
+      <label class="check" id="enabled-row" hidden>
+        <input id="f-enabled" type="checkbox" checked>
+        <span>Enabled</span>
+      </label>
+
+      <fieldset class="group">
+        <legend>Allowed modes</legend>
+        <label class="check"><input id="f-sync" type="checkbox" checked><span>Synchronous (<code>POST /api/v1/watermark</code>)</span></label>
+        <label class="check"><input id="f-async" type="checkbox" checked><span>Asynchronous jobs (<code>POST /api/v1/jobs</code>)</span></label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Limits <em>empty = server default</em></legend>
+        <div class="grid three">
+          <label class="field"><span>Max file size (MB)</span><input id="f-maxmb" type="number" min="1" step="1" inputmode="numeric"></label>
+          <label class="field"><span>Requests per minute</span><input id="f-rpm" type="number" min="1" max="10000" step="1" inputmode="numeric"></label>
+          <label class="field"><span>Active jobs</span><input id="f-jobs" type="number" min="1" max="1000" step="1" inputmode="numeric"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Watermark text</legend>
+        <label class="field">
+          <span>Fixed text <em>optional: if set, the text sent by the application is ignored</em></span>
+          <textarea id="f-text" rows="2" spellcheck="false" placeholder="e.g. CONFIDENTIAL&#10;{user} · {date}"></textarea>
+        </label>
+        <label class="check">
+          <input id="f-user" type="checkbox">
+          <span>The application can set the end user (<code>user</code> and <code>email</code> fields, shown in {user} and {email})</span>
+        </label>
+        <p class="note">Otherwise {user} is the application name and {email} is empty.</p>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Network</legend>
+        <label class="field">
+          <span>Allowed addresses <em>optional, one per line</em></span>
+          <textarea id="f-networks" rows="2" spellcheck="false" placeholder="100.101.102.103&#10;100.64.0.0/10"></textarea>
+        </label>
+        <p class="note">Leave empty to accept the token from any address that can reach the server.</p>
+      </fieldset>
+
+      <p id="form-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="cancel" class="secondary">Cancel</button>
+        <button type="submit" id="save" class="primary compact">Create token</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="secret" aria-labelledby="secret-title">
+    <h2 id="secret-title">Copy the token now</h2>
+    <p>This is the only time the token is shown. Store it in the application's secret store: if it is lost, rotate it to get a new one.</p>
+    <div class="secret-box">
+      <code id="secret-value"></code>
+      <button type="button" id="copy" class="secondary">Copy</button>
+    </div>
+    <p class="note" id="secret-for"></p>
+    <div class="dialog-actions">
+      <button type="button" id="secret-done" class="primary compact">Done</button>
+    </div>
+  </dialog>
+</body>
+</html>

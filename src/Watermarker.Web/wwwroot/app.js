@@ -114,6 +114,7 @@ function renderUser() {
     badge.className = "user-badge";
     badge.textContent = "Sign-in is disabled on this server (development mode)";
     box.append(badge);
+    if (me.isAdmin) box.append(adminLink());
     box.hidden = false;
     return;
   }
@@ -151,8 +152,20 @@ function renderUser() {
 
   info.append(name, mail);
   if (parts.length) info.append(meta);
+  if (me.isAdmin) info.append(adminLink());
   box.append(avatar, info, out);
   box.hidden = false;
+}
+
+// Collegamento alla gestione dei token delle API, solo per gli amministratori.
+function adminLink() {
+  const p = document.createElement("p");
+  p.className = "user-admin";
+  const a = document.createElement("a");
+  a.href = "admin.html";
+  a.textContent = "Manage API tokens";
+  p.append(a);
+  return p;
 }
 
 function initials(text) {

@@ -151,7 +151,7 @@ in .pdf viene trattato come Word, e il portale lo segnala tra gli avvisi.
 
 ## Portale web
 
-### API
+### Endpoint usati dalla pagina
 
 - `GET /healthz`: controllo di salute (usato da Docker).
 - `GET /api/capabilities`: formati disponibili, limiti e caratteri.
@@ -227,6 +227,108 @@ un file viene scaricato direttamente, più file in un unico archivio ZIP. Ogni f
 singolarmente dalla lista, e quelli falliti si possono rielaborare. L'anteprima mostra il file selezionato
 nella lista.
 
+## API per altre applicazioni
+
+Le altre applicazioni usano il servizio con un **token** creato dall'amministratore, uno per applicazione.
+Le API sono sotto `/api/v1` e non usano il login di Entra ID: il token basta. La descrizione OpenAPI è in
+`GET /api/v1/openapi.yaml` (senza token), utile per generare client o un connettore personalizzato.
+
+### Gestione dei token
+
+La pagina **`/admin.html`** (link "Manage API tokens" nel riquadro utente) permette di creare, modificare,
+disattivare, rinnovare il segreto ed eliminare i token. È riservata al ruolo dell'app `Watermark.Admin`
+(`Portal:AdminRole`, in Docker `ADMIN_ROLE`): in Entra *App registrations → App roles* crea il ruolo con valore
+`Watermark.Admin` e assegnalo agli amministratori da *Enterprise applications → Users and groups*.
+Chi ha il ruolo amministrativo può usare anche il portale, pure se `REQUIRED_ROLE` è impostato.
+Senza login (sviluppo) la pagina funziona solo con `ASPNETCORE_ENVIRONMENT=Development`.
+
+Per ogni token si può impostare:
+
+| Impostazione | Effetto |
+|---|---|
+| Scadenza | 30/90/180/365 giorni, una data, oppure mai. Dopo la scadenza il token viene rifiutato (401) |
+| Abilitato | Un token disattivato viene rifiutato subito, senza eliminarlo |
+| Modalità | Sincrona, asincrona o entrambe |
+| Dimensione massima del file | Non oltre `Portal:MaxUploadMb` |
+| Richieste al minuto | Elaborazioni (sincrone o nuovi lavori) al minuto; oltre: 429 con `Retry-After` |
+| Lavori attivi | Lavori asincroni in coda o in corso contemporaneamente |
+| Testo fisso | Se presente, il testo inviato dall'applicazione è ignorato (segnaposto ammessi) |
+| Utente finale | Se permesso, l'applicazione può indicare `user` ed `email` per {user} ed {email}; altrimenti {user} è il nome del token |
+| Indirizzi ammessi | IP o reti CIDR (es. `100.64.0.0/10`, gli IP della tailnet) da cui il token è accettato |
+
+Il token completo (`wmk_<id>_<segreto>`) è mostrato **una sola volta**, alla creazione o al rinnovo del segreto.
+Sul server si conserva solo l'impronta SHA-256 del segreto (file `tokens.json` nel volume `api`): chi legge il
+file non può usare i token. Se un token viene perso o esposto: *Rotate* (il vecchio smette subito di funzionare)
+oppure *Disable*. Ultimo utilizzo, indirizzo e numero di richieste sono visibili nella pagina.
+
+### Chiamate
+
+Il token va nell'intestazione `Authorization: Bearer wmk_...` (in alternativa `X-Api-Key: wmk_...`).
+I campi del form sono gli stessi del portale: `file` (obbligatorio), `text`, `angle`, `size`, `color`,
+`opacity`, `font`, `output` (`original` | `pdf`), `tile`, `pptxSlides`, e, se il token lo permette, `user` ed `email`.
+
+| Metodo e percorso | Uso |
+|---|---|
+| `POST /api/v1/watermark` | **Sincrona**: la risposta è il file marcato. Intestazioni `X-Watermark-Id`, `X-Watermark-Format`, `X-Watermark-Warnings` (array JSON in Base64) |
+| `POST /api/v1/jobs` | **Asincrona**: 202 con l'id del lavoro e `Location` |
+| `GET /api/v1/jobs/{id}` | Stato: `queued`, `running`, `succeeded`, `failed` (con errore) |
+| `GET /api/v1/jobs/{id}/result` | File marcato (409 se non è ancora pronto) |
+| `DELETE /api/v1/jobs/{id}` | Elimina subito lavoro e file |
+| `GET /api/v1/jobs` | Ultimi lavori del token |
+| `GET /api/v1/capabilities` | Formati, font e limiti del token |
+
+Ogni token vede solo i propri lavori. I risultati restano disponibili per `Api:ResultRetentionHours` ore
+(default 24), poi vengono cancellati. Gli errori sono in formato ProblemDetails (`title`, `detail`).
+
+```bash
+# Sincrona
+curl -H "Authorization: Bearer $WATERMARK_TOKEN" \
+     -F file=@report.docx -F "text=CONFIDENTIAL" -F output=original \
+     -o report_watermarked.docx https://<portale>/api/v1/watermark
+
+# Asincrona
+curl -H "Authorization: Bearer $WATERMARK_TOKEN" -F file=@video.mp4 -F "text={user} · {date}" \
+     https://<portale>/api/v1/jobs                       # → {"id":"…","status":"queued",…}
+curl -H "Authorization: Bearer $WATERMARK_TOKEN" https://<portale>/api/v1/jobs/<id>
+curl -H "Authorization: Bearer $WATERMARK_TOKEN" -OJ https://<portale>/api/v1/jobs/<id>/result
+```
+
+```powershell
+$h = @{ Authorization = "Bearer $env:WATERMARK_TOKEN" }
+$form = @{ file = Get-Item .\report.pdf; text = "CONFIDENTIAL"; opacity = "0.3" }
+Invoke-RestMethod -Method Post -Uri https://<portale>/api/v1/watermark -Headers $h -Form $form `
+                  -OutFile .\report_watermarked.pdf
+```
+(`-Form` richiede PowerShell 7.)
+
+### Configurazione (sezione `Api`)
+
+| Chiave | Default | Significato |
+|---|---|---|
+| `Enabled` | true | Attiva `/api/v1` e la pagina dei token |
+| `DataPath` | `App_Data/api` (Docker: `/data/api`) | Cartella persistente dei token |
+| `JobsPath` | `App_Data/jobs` (Docker: `/data/jobs`) | File dei lavori asincroni |
+| `AsyncWorkers` | 1 | Lavori asincroni elaborati insieme (si sommano a `Portal:MaxConcurrentJobs`) |
+| `MaxQueuedJobs` | 50 | Lavori in attesa, per tutti i token, oltre i quali si risponde 503 |
+| `ResultRetentionHours` | 24 | Durata dei risultati asincroni |
+| `DefaultRequestsPerMinute` | 60 | Limite per i token che non ne indicano uno |
+| `DefaultMaxActiveJobs` | 5 | Idem per i lavori attivi |
+
+In Docker i due volumi `api` e `jobs` sono già nei file compose. Le richieste sincrone condividono la coda
+del portale (`MaxConcurrentJobs`, `QueueLimit`). Dopo un riavvio i lavori già terminati restano scaricabili;
+quelli in coda o in corso risultano falliti ("Interrupted") e vanno reinviati.
+
+**Rete.** Il servizio è raggiungibile solo dalla tailnet: le applicazioni che lo chiamano devono essere
+nella tailnet (con le ACL di Tailscale si decide quali macchine possono raggiungerlo). Servizi cloud come
+Power Automate non lo raggiungono senza un punto di accesso pubblico o un gateway.
+
+### Test e KPI
+
+`tools/apitest` contiene `wmtest`, un client a riga di comando (solo Python 3.9+, nessuna installazione)
+che esegue anche una suite di test funzionali delle API e test di carico a gradini, con report HTML,
+JUnit e KPI (throughput, latenze p50/p95/p99, error rate, Apdex, capacità sostenibile). Vedi
+[tools/apitest/README.md](tools/apitest/README.md).
+
 ## Limiti
 
 - Nei formati modificabili (Office, OpenDocument, Visio) chi conosce il formato può rimuovere il
@@ -252,6 +354,10 @@ src/Watermarker.Core
   Packaging/                 lettura/scrittura dei pacchetti ZIP
 src/Watermarker.Cli          riga di comando
 src/Watermarker.Web          portale (API minimal + pagina in wwwroot)
+  Processing.cs              lettura delle impostazioni ed elaborazione, comuni a portale e API
+  ApiTokens.cs ApiJobs.cs    token, limiti, lavori asincroni
+  ApiEndpoints.cs            /api/v1 per le altre applicazioni (openapi.yaml)
+  AdminEndpoints.cs          gestione dei token (wwwroot/admin.html)
 ```
 
 ## Librerie

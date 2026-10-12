@@ -144,11 +144,13 @@ public static class PortalAuthentication
         app.UseAuthorization();
 
         var requiredRole = string.IsNullOrWhiteSpace(portal.RequiredRole) ? null : portal.RequiredRole.Trim();
+        var adminRole = string.IsNullOrWhiteSpace(portal.AdminRole) ? null : portal.AdminRole.Trim();
 
         app.Use(async (ctx, next) =>
         {
             var path = ctx.Request.Path;
-            if (PublicPaths.Any(p => path.Equals(p, StringComparison.OrdinalIgnoreCase)))
+            // Le API per le applicazioni (/api/v1) usano i propri token, verificati da UseApiTokens.
+            if (PublicPaths.Any(p => path.Equals(p, StringComparison.OrdinalIgnoreCase)) || path.StartsWithSegments("/api/v1"))
             {
                 await next();
                 return;
@@ -164,7 +166,8 @@ public static class PortalAuthentication
                 return;
             }
 
-            if (requiredRole is not null && !ctx.User.IsInRole(requiredRole))
+            if (requiredRole is not null && !ctx.User.IsInRole(requiredRole)
+                && !(adminRole is not null && ctx.User.IsInRole(adminRole)))
             {
                 ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
                 if (isApi)

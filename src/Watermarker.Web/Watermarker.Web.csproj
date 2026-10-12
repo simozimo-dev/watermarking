@@ -14,6 +14,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Descrizione OpenAPI delle API /api/v1, servita da GET /api/v1/openapi.yaml -->
+    <EmbeddedResource Include="openapi.yaml" LogicalName="openapi.yaml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Watermarker.Core\Watermarker.Core.csproj" />
   </ItemGroup>
 

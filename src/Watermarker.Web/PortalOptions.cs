@@ -46,6 +46,12 @@ public sealed class PortalOptions
     /// </summary>
     public string? RequiredRole { get; set; }
 
+    /// <summary>
+    /// Ruolo dell'app (Entra ID) che permette di gestire i token delle API, es. "Watermark.Admin".
+    /// Chi lo possiede può usare anche il portale, pure senza <see cref="RequiredRole"/>.
+    /// </summary>
+    public string? AdminRole { get; set; } = "Watermark.Admin";
+
     /// <summary>Durata della sessione, rinnovata a ogni utilizzo.</summary>
     public int SessionHours { get; set; } = 8;
 

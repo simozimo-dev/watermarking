@@ -1,0 +1,278 @@
+openapi: 3.0.3
+info:
+  title: Document Watermark API
+  version: "1.0"
+  description: |
+    Applies a text watermark to Office documents, PDFs, images, archives, emails and videos.
+
+    Every request (except this description) needs an API token issued by the portal administrator:
+
+        Authorization: Bearer wmk_...
+
+    Two ways to process a file:
+
+    * **Synchronous** - `POST /api/v1/watermark` returns the watermarked file in the response.
+      Best for ordinary documents that take a few seconds.
+    * **Asynchronous** - `POST /api/v1/jobs` returns `202 Accepted` with a job id. Poll
+      `GET /api/v1/jobs/{id}` until the status is `succeeded` or `failed`, then download
+      `GET /api/v1/jobs/{id}/result`. Best for videos, large files and batches.
+      Results are kept for a limited time (see `resultRetentionHours` in `/capabilities`).
+
+    Errors use the `application/problem+json` format (RFC 7807) with `title` and `detail`.
+servers:
+  - url: /
+security:
+  - token: []
+
+paths:
+  /api/v1/capabilities:
+    get:
+      summary: Supported formats, fonts and the limits of your token
+      operationId: getCapabilities
+      responses:
+        "200":
+          description: Capabilities
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capabilities" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/watermark:
+    post:
+      summary: Watermark a file and return it (synchronous)
+      operationId: watermark
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/WatermarkRequest" }
+      responses:
+        "200":
+          description: The watermarked file. The name is in Content-Disposition.
+          headers:
+            X-Watermark-Id:
+              description: Id of the operation, also written in the server log.
+              schema: { type: string }
+            X-Watermark-Format:
+              description: Detected format (URL-encoded).
+              schema: { type: string }
+            X-Watermark-Warnings:
+              description: Base64 of a JSON array of strings (notes such as "converted to PDF").
+              schema: { type: string }
+            X-Watermark-Warning-Count:
+              schema: { type: integer }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "415": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/TooMany" }
+        "503": { $ref: "#/components/responses/Problem" }
+        "504": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/jobs:
+    post:
+      summary: Queue a file for watermarking (asynchronous)
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/WatermarkRequest" }
+      responses:
+        "202":
+          description: Job queued. Location points to the job status.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/TooMany" }
+        "503": { $ref: "#/components/responses/Problem" }
+    get:
+      summary: Jobs created with your token (most recent first, up to 200)
+      operationId: listJobs
+      responses:
+        "200":
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/jobs/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Job status
+      operationId: getJob
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete a job and its files (not while it is running)
+      operationId: deleteJob
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /api/v1/jobs/{id}/result:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: Download the watermarked file
+      operationId: getJobResult
+      responses:
+        "200":
+          description: The watermarked file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: The job is not finished yet (Retry-After header) or it failed.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+
+components:
+  securitySchemes:
+    token:
+      type: http
+      scheme: bearer
+      description: API token issued by the administrator (wmk_...). The header X-Api-Key is also accepted.
+
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Missing, invalid, disabled or expired token
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    TooMany:
+      description: Request limit of the token reached (see Retry-After, in seconds)
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    WatermarkRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: The file to watermark. Its name is used to name the result.
+        text:
+          type: string
+          maxLength: 200
+          description: |
+            Watermark text, up to 10 lines separated by \n. Placeholders: {date}, {time}, {filename},
+            {user}, {email}. Ignored when the token has a fixed text.
+        angle: { type: number, minimum: -360, maximum: 360, default: 45 }
+        size: { type: number, minimum: 4, maximum: 400, default: 60, description: Font size in points }
+        color: { type: string, default: "#808080", example: "#C00000" }
+        opacity: { type: number, minimum: 0.05, maximum: 1, default: 0.35 }
+        font: { type: string, description: One of the fonts listed in /capabilities. Default is the first. }
+        output:
+          type: string
+          enum: [original, pdf]
+          default: original
+          description: Keep the original format or convert to PDF first.
+        tile: { type: boolean, default: false, description: Repeat the watermark across the page }
+        pptxSlides: { type: boolean, default: false, description: "PowerPoint: also place it on top of each slide" }
+        user:
+          type: string
+          description: |
+            End user shown in {user}. Only for tokens allowed to set it; otherwise {user} is the token name.
+        email:
+          type: string
+          description: End user's email shown in {email}. Only for tokens allowed to set the user.
+
+    Job:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        fileName: { type: string }
+        inputBytes: { type: integer }
+        output: { type: string, enum: [original, pdf] }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true, description: When the result will be deleted }
+        format: { type: string, nullable: true }
+        warnings: { type: array, items: { type: string } }
+        result:
+          type: object
+          nullable: true
+          properties:
+            fileName: { type: string }
+            contentType: { type: string }
+            bytes: { type: integer }
+            url: { type: string }
+        error:
+          type: object
+          nullable: true
+          properties:
+            status: { type: integer }
+            title: { type: string }
+            detail: { type: string }
+        statusUrl: { type: string }
+
+    Capabilities:
+      type: object
+      properties:
+        token:
+          type: object
+          properties:
+            name: { type: string }
+            expiresAt: { type: string, format: date-time, nullable: true }
+            allowSync: { type: boolean }
+            allowAsync: { type: boolean }
+            maxUploadBytes: { type: integer }
+            requestsPerMinute: { type: integer }
+            maxActiveJobs: { type: integer }
+            fixedText: { type: boolean, description: The text is set by the administrator }
+            allowUserOverride: { type: boolean }
+        native: { type: array, items: { type: string }, description: Extensions watermarked in their own format }
+        pdf: { type: array, items: { type: string }, description: Extensions that can be converted to PDF }
+        converterAvailable: { type: boolean }
+        maxTextLength: { type: integer }
+        maxLines: { type: integer }
+        fonts: { type: array, items: { type: string } }
+        placeholders: { type: array, items: { type: string } }
+        resultRetentionHours: { type: integer }
+
+    Problem:
+      type: object
+      properties:
+        status: { type: integer }
+        title: { type: string }
+        detail: { type: string }

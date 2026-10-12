@@ -52,6 +52,14 @@ services:
       AzureAd__ClientId: ${AZUREAD_CLIENT_ID:-}
       AzureAd__ClientSecret: ${AZUREAD_CLIENT_SECRET:-}
       Portal__RequiredRole: ${REQUIRED_ROLE:-}
+      Portal__AdminRole: ${ADMIN_ROLE:-Watermark.Admin}
+      # API per le altre applicazioni (token gestiti dalla pagina admin.html)
+      Api__Enabled: ${API_ENABLED:-true}
+      Api__AsyncWorkers: ${API_ASYNC_WORKERS:-1}
+      Api__MaxQueuedJobs: ${API_MAX_QUEUED_JOBS:-50}
+      Api__ResultRetentionHours: ${API_RESULT_RETENTION_HOURS:-24}
+      Api__DefaultRequestsPerMinute: ${API_DEFAULT_REQUESTS_PER_MINUTE:-60}
+      Api__DefaultMaxActiveJobs: ${API_DEFAULT_MAX_ACTIVE_JOBS:-5}
     # Hardening: il container elabora file caricati dagli utenti.
     read_only: true
     tmpfs:
@@ -59,6 +67,8 @@ services:
     volumes:
       - ./fonts:/usr/share/fonts/custom:ro    # font con licenza (Arial, Calibri...), facoltativi
       - keys:/data/keys                       # chiavi dei cookie di sessione: sopravvivono ai riavvii
+      - api:/data/api                         # token delle API (solo impronte, non i segreti)
+      - jobs:/data/jobs                       # file dei lavori asincroni, cancellati alla scadenza
     cap_drop:
       - ALL
     security_opt:
@@ -71,5 +81,7 @@ services:
 
 volumes:
   keys:           # chiavi Data Protection del portale
+  api:            # token delle API
+  jobs:           # lavori asincroni delle API
   caddy_data:     # certificati emessi da Caddy
   caddy_config:

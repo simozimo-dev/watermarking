@@ -32,8 +32,9 @@ RUN apt-get update \
 COPY docker/fonts.conf /etc/fonts/local.conf
 RUN mkdir -p /usr/share/fonts/custom && fc-cache -f
 
-# Chiavi Data Protection (cookie di sessione): da montare su un volume persistente.
-RUN mkdir -p /data/keys && chown app:app /data/keys
+# Dati persistenti, da montare su volumi: chiavi dei cookie di sessione, token delle API,
+# file dei lavori asincroni delle API.
+RUN mkdir -p /data/keys /data/api /data/jobs && chown app:app /data/keys /data/api /data/jobs
 
 WORKDIR /app
 COPY --from=build /app .
@@ -42,6 +43,8 @@ COPY --from=build /app .
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     Portal__WorkDirectory=/tmp/watermarker \
     Portal__DataProtectionPath=/data/keys \
+    Api__DataPath=/data/api \
+    Api__JobsPath=/data/jobs \
     HOME=/tmp \
     XDG_CACHE_HOME=/tmp/.cache
 
