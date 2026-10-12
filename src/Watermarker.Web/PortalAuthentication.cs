@@ -177,11 +177,10 @@ public static class PortalAuthentication
                 }
                 else
                 {
-                    ctx.Response.ContentType = "text/plain; charset=utf-8";
-                    await ctx.Response.WriteAsync(
-                        $"Access denied.\n\nYou are signed in as {PortalUser.From(ctx.User)?.Username}, but your account " +
-                        $"does not have the '{requiredRole}' role required to use this portal.\n" +
-                        "Ask your administrator to grant access, then sign in again: /auth/signout");
+                    await AccessDenied.WriteAsync(ctx, "Access denied",
+                        $"Your account does not have the '{requiredRole}' role required to use this portal. " +
+                        "Ask your administrator to grant access, then sign in again.",
+                        canUsePortal: false, canSignOut: true);
                 }
                 return;
             }

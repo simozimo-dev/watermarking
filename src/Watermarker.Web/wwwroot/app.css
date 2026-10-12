@@ -559,3 +559,8 @@ input[type="number"], input[type="date"] {
   dialog .grid, dialog .grid.three { grid-template-columns: 1fr; }
 }
 .user-admin a { color: var(--accent); text-underline-offset: 2px; }
+
+/* ------------------------------------------------ accesso negato */
+.signed-out .account { font-size: 14px; margin-top: -12px; }
+.signed-out .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.signed-out .secondary { display: inline-block; text-decoration: none; padding: 12px 16px; }

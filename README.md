@@ -240,6 +240,8 @@ disattivare, rinnovare il segreto ed eliminare i token. È riservata al ruolo de
 (`Portal:AdminRole`, in Docker `ADMIN_ROLE`): in Entra *App registrations → App roles* crea il ruolo con valore
 `Watermark.Admin` e assegnalo agli amministratori da *Enterprise applications → Users and groups*.
 Chi ha il ruolo amministrativo può usare anche il portale, pure se `REQUIRED_ROLE` è impostato.
+A chi non ha il ruolo il server non invia nemmeno la pagina: riceve una pagina "Access denied" (403)
+con l'account usato e il pulsante per rientrare con un altro account; il link alla pagina non compare.
 Senza login (sviluppo) la pagina funziona solo con `ASPNETCORE_ENVIRONMENT=Development`.
 
 Per ogni token si può impostare:

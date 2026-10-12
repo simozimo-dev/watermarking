@@ -94,6 +94,9 @@ if (api.Enabled)
     _ = app.Services.GetRequiredService<ApiJobStore>();
 }
 
+// La pagina di gestione dei token non viene nemmeno inviata a chi non è amministratore.
+app.UseAdminPageProtection(authEnabled, portal);
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRateLimiter();
