@@ -18,6 +18,9 @@ public static class AccessDenied
 
         var account = user is null ? "" :
             $"""<p class="account">Signed in as <strong>{E(user.Name)}</strong>{(user.Username is null ? "" : $" ({E(user.Username)})")}.</p>""";
+        // Ruoli presenti nella sessione: dice subito se il problema è l'assegnazione in Entra.
+        var roles = user is null ? "" :
+            $"""<p class="account">Roles in this session: {(user.Roles.Count == 0 ? "none" : E(string.Join(", ", user.Roles)))}.</p>""";
         var back = canUsePortal ? """<a class="primary" href="/">Back to the portal</a>""" : "";
         var signOut = canSignOut ? """<a class="secondary" href="/auth/signout">Sign in with another account</a>""" : "";
 
@@ -38,6 +41,7 @@ public static class AccessDenied
                 <h1>{E(title)}</h1>
                 <p>{E(message)}</p>
                 {account}
+                {roles}
                 <div class="buttons">{back}{signOut}</div>
               </main>
             </body>

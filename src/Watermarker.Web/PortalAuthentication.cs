@@ -36,6 +36,19 @@ public sealed record PortalUser(
 
         return new PortalUser(name, username, Find("oid", ObjectIdClaim), Find("tid", TenantIdClaim), roles);
     }
+
+    /// <summary>
+    /// Verifica un ruolo dell'app. I ruoli possono arrivare come claim "roles" (Entra) oppure, se il
+    /// gestore OIDC rimappa i claim, come ClaimTypes.Role: si accettano entrambi, indipendentemente
+    /// da RoleClaimType (su cui si basa IsInRole).
+    /// </summary>
+    public static bool HasRole(ClaimsPrincipal principal, string? role)
+    {
+        if (string.IsNullOrWhiteSpace(role) || principal.Identity?.IsAuthenticated != true) return false;
+        role = role.Trim();
+        return principal.Claims.Any(c => (c.Type is "roles" or "role" or ClaimTypes.Role)
+                                         && string.Equals(c.Value, role, StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 /// <summary>
@@ -166,8 +179,8 @@ public static class PortalAuthentication
                 return;
             }
 
-            if (requiredRole is not null && !ctx.User.IsInRole(requiredRole)
-                && !(adminRole is not null && ctx.User.IsInRole(adminRole)))
+            if (requiredRole is not null && !PortalUser.HasRole(ctx.User, requiredRole)
+                && !PortalUser.HasRole(ctx.User, adminRole))
             {
                 ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
                 if (isApi)

@@ -10,7 +10,7 @@ public static class AdminEndpoints
 
     public static bool IsAdmin(HttpContext http, bool authEnabled, PortalOptions portal, IHostEnvironment env) =>
         authEnabled
-            ? !string.IsNullOrWhiteSpace(portal.AdminRole) && http.User.IsInRole(portal.AdminRole.Trim())
+            ? PortalUser.HasRole(http.User, portal.AdminRole)
             : env.IsDevelopment();
 
     public static void MapAdmin(this WebApplication app, bool authEnabled, PortalOptions portal)
