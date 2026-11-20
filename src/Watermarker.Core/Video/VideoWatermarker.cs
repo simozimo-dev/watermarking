@@ -1,5 +1,5 @@
 using System.Globalization;
-using Watermarker.Core.Conversion;
+using Watermarker.Core.Tools;
 using Watermarker.Core.Rendering;
 
 namespace Watermarker.Core.Video;

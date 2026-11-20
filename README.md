@@ -2,13 +2,15 @@
 
 Applica un watermark testuale a documenti Office e OpenDocument, PDF, XPS, Visio, immagini, video,
 archivi ZIP ed email, **mantenendo il formato originale** e le funzionalità del documento
-(selezione e ricerca del testo, modifica, formule). In alternativa converte il file in PDF e poi
-applica il watermark. Cifratura e permessi sono lasciati a Microsoft Purview.
+(selezione e ricerca del testo, modifica, formule). Il file resta sempre nel suo formato: non c'è
+conversione in PDF. Cifratura e permessi sono lasciati a Microsoft Purview.
+
+Richiede **.NET 10** (SDK per compilare, ASP.NET Core Runtime per eseguire).
 
 Due modi d'uso, sullo stesso motore (`Watermarker.Core`):
 
 - **Portale web** (`Watermarker.Web`, interfaccia in inglese): l'utente carica il file, regola il watermark con un'anteprima
-  dal vivo e scarica il risultato. Per ora senza autenticazione.
+  dal vivo e scarica il risultato. Login con Microsoft Entra ID, API per le altre applicazioni.
 - **Riga di comando** (`Watermarker.Cli`): per script ed elaborazioni in blocco.
 
 ## Avvio rapido
@@ -28,28 +30,21 @@ Con Docker, vedi la sezione [Docker](#docker).
 
 ## Programmi esterni (facoltativi)
 
-Nelle immagini Docker sono già inclusi. Fuori da Docker:
+Nell'immagine Docker è già incluso. Fuori da Docker:
 
 | Programma | Serve per | Se manca |
 |---|---|---|
-| **LibreOffice** | Conversione in PDF (tutti i formati della seconda tabella) | L'opzione "Converti in PDF" non è disponibile |
 | **FFmpeg** (con ffprobe) | Video | I video non sono accettati |
 
-Vengono cercati nelle posizioni standard e nel PATH; altrimenti si indica il percorso in
-`appsettings.json` (`Portal:LibreOfficePath`, `Portal:FfmpegPath`) o con `--libreoffice` / `--ffmpeg` nella CLI.
-Su Windows LibreOffice si installa da libreoffice.org, FFmpeg da ffmpeg.org (o `winget install Gyan.FFmpeg`).
+Viene cercato nelle posizioni standard e nel PATH; altrimenti si indica il percorso in
+`appsettings.json` (`Portal:FfmpegPath`) o con `--ffmpeg` nella CLI.
+Su Windows si installa da ffmpeg.org (o `winget install Gyan.FFmpeg`).
 
 ## Docker
 
-Due configurazioni, sugli stessi file:
-
-| | Comando | Container |
-|---|---|---|
-| **Standard** | `docker compose up -d --build` | `proxy` (Caddy, HTTPS) + `watermarker` (portale con LibreOffice e FFmpeg) |
-| **Conversione separata** | `docker compose -f docker-compose.yml -f docker-compose.split.yml up -d --build` | come sopra, ma il portale è "slim" e la conversione in PDF la fa `converter` (Gotenberg) |
-
-La conversione separata isola LibreOffice (un crash o un file malevolo non tocca il portale),
-alleggerisce l'immagine del portale e permette di scalare la conversione a parte.
+`docker compose up -d --build` avvia due container: `proxy` (Caddy, HTTPS) e `watermarker`
+(portale, API e motore, con FFmpeg). Per un Caddy già presente sul server vedi
+[Stack per un Caddy condiviso](#stack-per-un-caddy-condiviso).
 
 ### Primo avvio
 
@@ -64,9 +59,8 @@ alleggerisce l'immagine del portale e permette di scalare la conversione a parte
 
 | File | Contenuto |
 |---|---|
-| `Dockerfile` | build .NET e due immagini: `full` (con LibreOffice, predefinita) e `slim` |
+| `Dockerfile` | build .NET 10 e immagine unica (Ubuntu 24.04). I nomi `slim` e `full` restano come alias per i compose che li indicano ancora |
 | `docker-compose.yml` | configurazione standard |
-| `docker-compose.split.yml` | aggiunta per la conversione separata |
 | `docker/Caddyfile` | proxy HTTPS, limite di dimensione delle richieste, timeout lunghi per i video |
 | `docker/fonts.conf` | sostituti dei font Microsoft con le stesse metriche |
 | `.env.example` | parametri: nome del sito, limiti, risorse, fuso orario |
@@ -74,11 +68,11 @@ alleggerisce l'immagine del portale e permette di scalare la conversione a parte
 
 ### Sicurezza dei container
 
-- Solo il proxy espone porte; portale e convertitore sono raggiungibili solo sulla rete interna.
+- Solo il proxy espone porte; il portale è raggiungibile solo sulla rete interna.
 - Il portale gira come utente non privilegiato, con filesystem in sola lettura, nessuna capability
   Linux e limiti di CPU e memoria. L'unico spazio scrivibile è `/tmp` in RAM (`tmpfs`): i documenti
   non vengono mai scritti su disco.
-- `MAX_BODY` (Caddy, Gotenberg) deve restare un po' più grande di `MAX_UPLOAD_MB` (portale).
+- `MAX_BODY` (Caddy) deve restare un po' più grande di `MAX_UPLOAD_MB` (portale).
 
 ### Font
 
@@ -91,8 +85,12 @@ e riavviare.
 ### Stack per un Caddy condiviso
 
 `deploy/watermarker/` contiene lo stack da usare quando Caddy è in uno stack separato (rete `edge`),
-con Gotenberg e il login Entra ID: copia `docker-compose.yml` e `.env.example` (rinominato `.env`) nella
-cartella dello stack sul server.
+con il login Entra ID e le API: copia `docker-compose.yml` e `.env.example` (rinominato `.env`) nella
+cartella dello stack sul server e adatta `context` al percorso del codice (predefinito `/apps/watermark`).
+
+**Aggiornamento da una versione con Gotenberg:** il servizio `converter` e la rete `backend` non servono
+più. Sostituisci il compose dello stack con quello nuovo (o togli `converter`, `backend`,
+`Portal__ConverterUrl` e `depends_on`), poi `docker compose up -d --build --remove-orphans`.
 
 ## Formati
 
@@ -112,15 +110,14 @@ cartella dello stack sul server.
 | ZIP | .zip | Watermark su ogni file supportato contenuto, anche ZIP annidati | I file non supportati restano invariati e vengono segnalati |
 | Email | .eml | Watermark sugli allegati, anche di messaggi inoltrati | La firma S/MIME viene invalidata |
 
-### Solo con conversione in PDF (LibreOffice)
-
-.doc .dot .xls .xlt .ppt .pot .pps (Office 97-2003), .rtf .txt .csv .htm .html, .vsd .vst, .odg, .dxf, .svg;
-in più tutti i formati Office, OpenDocument, Visio e immagini della tabella precedente.
-
 ### Non supportati
 
-.msg (Outlook), .xlsb, .doc/.xls/.ppt mantenendo il formato originale, .heic, file protetti da password,
-file già cifrati da Purview (vanno elaborati prima dell'etichettatura).
+- Office 97-2003 (.doc .dot .xls .xlt .ppt .pot .pps) e Visio 2003-2010 (.vsd .vst): il messaggio di errore
+  suggerisce di salvarli nel formato attuale (.docx, .xlsx, .pptx, .vsdx).
+- .rtf .txt .csv .htm .html, .odg, .dxf, .svg, .msg (Outlook), .xlsb, .heic.
+- File protetti da password e file già cifrati da Purview (vanno elaborati prima dell'etichettatura).
+
+La conversione in PDF (LibreOffice/Gotenberg) è stata rimossa: ogni file mantiene il proprio formato.
 
 ## Impostazioni del watermark
 
@@ -134,7 +131,6 @@ file già cifrati da Purview (vanno elaborati prima dell'etichettatura).
 | Carattere | `-f` | lista configurabile | Arial |
 | Ripetizione a griglia | `--tile` | sì | no |
 | PowerPoint sopra le slide | `--pptx-slides` | sì | no |
-| Conversione in PDF | `--to-pdf` | sì | no |
 
 **Segnaposto nel testo:** `{date}`, `{time}`, `{filename}`, `{user}`, `{email}` (accettati anche `{data}`, `{ora}`, `{nomefile}`, `{utente}`). Nel portale `{user}` e `{email}`
 vengono dall'account Entra ID (vuoti se il login è disattivato); nella CLI `{user}` è l'utente di Windows.
@@ -157,7 +153,7 @@ in .pdf viene trattato come Word, e il portale lo segnala tra gli avvisi.
 - `GET /api/capabilities`: formati disponibili, limiti e caratteri.
 - `GET /api/me`: utente autenticato (nome, email, ruoli, ora di accesso).
 - `POST /api/watermark` (multipart/form-data): campi `file`, `text`, `angle`, `size`, `color` (#RRGGBB),
-  `opacity` (0-1), `font`, `output` (`original` | `pdf`), `tile`, `pptxSlides`.
+  `opacity` (0-1), `font`, `tile`, `pptxSlides`.
   Richiede l'header `X-Requested-With: watermarker` (protezione CSRF). La risposta è il file. Gli avvisi arrivano nell'intestazione `X-Watermark-Warnings`
   (array JSON in Base64); gli errori sono in formato ProblemDetails.
 
@@ -169,9 +165,8 @@ in .pdf viene trattato come Word, e il portale lo segnala tra gli avvisi.
 | `MaxConcurrentJobs` | 2 | Elaborazioni contemporanee (le altre restano in coda) |
 | `QueueLimit` | 20 | Richieste in coda oltre le quali si risponde 503 |
 | `Fonts` | Arial, Calibri, ... | Caratteri selezionabili (lista chiusa) |
-| `LibreOfficePath`, `FfmpegPath` | automatico | Percorsi dei programmi esterni |
-| `ConverterUrl` | vuoto | URL di Gotenberg: se impostato, la conversione in PDF avviene lì invece che con LibreOffice locale |
-| `WorkDirectory` | cartella temporanea | File temporanei e profili di LibreOffice |
+| `FfmpegPath` | automatico | Percorso di FFmpeg |
+| `WorkDirectory` | cartella temporanea | File temporanei |
 
 Sotto **IIS** va alzato anche `maxAllowedContentLength` in web.config, altrimenti i file sopra 30 MB vengono rifiutati.
 
@@ -267,7 +262,8 @@ oppure *Disable*. Ultimo utilizzo, indirizzo e numero di richieste sono visibili
 
 Il token va nell'intestazione `Authorization: Bearer wmk_...` (in alternativa `X-Api-Key: wmk_...`).
 I campi del form sono gli stessi del portale: `file` (obbligatorio), `text`, `angle`, `size`, `color`,
-`opacity`, `font`, `output` (`original` | `pdf`), `tile`, `pptxSlides`, e, se il token lo permette, `user` ed `email`.
+`opacity`, `font`, `tile`, `pptxSlides`, e, se il token lo permette, `user` ed `email`. Il file mantiene sempre il
+proprio formato: `output=original` è ancora accettato per compatibilità, `output=pdf` viene rifiutato (400).
 
 | Metodo e percorso | Uso |
 |---|---|
@@ -346,12 +342,12 @@ JUnit e KPI (throughput, latenze p50/p95/p99, error rate, Apdex, capacità soste
 
 ```
 src/Watermarker.Core
-  WatermarkEngine.cs         motore: riconoscimento, scelta del formato, conversione, scrittura atomica
+  WatermarkEngine.cs         motore: riconoscimento, scelta del formato, scrittura atomica
   WatermarkOptions.cs        opzioni, colore, modalità di uscita
   TextTemplate.cs            segnaposto {data} {ora} {nomefile} {utente}
   Formats/                   riconoscimento del formato dal contenuto
   Pdf/ Office/ OpenDocument/ Visio/ Xps/ Images/ Video/ Containers/
-  Conversion/                LibreOffice, FFmpeg, ricerca degli eseguibili
+  Tools/                     esecuzione e ricerca di programmi esterni (FFmpeg)
   Rendering/                 contorni dei glifi e livelli trasparenti (SkiaSharp)
   Packaging/                 lettura/scrittura dei pacchetti ZIP
 src/Watermarker.Cli          riga di comando
@@ -364,5 +360,5 @@ src/Watermarker.Web          portale (API minimal + pagina in wwwroot)
 
 ## Librerie
 
-PDFsharp (MIT), DocumentFormat.OpenXml (MIT), SkiaSharp (MIT), Magick.NET (Apache 2.0), MimeKit (MIT).
-LibreOffice (MPL 2.0) e FFmpeg (LGPL/GPL) sono usati come programmi esterni.
+PDFsharp 6.2.4 (MIT; bloccato: dalla 6.5 la licenza è AGPL o commerciale), DocumentFormat.OpenXml (MIT), SkiaSharp (MIT), Magick.NET (Apache 2.0), MimeKit (MIT).
+FFmpeg (LGPL/GPL) è usato come programma esterno.

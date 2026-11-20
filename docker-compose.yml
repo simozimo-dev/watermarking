@@ -5,9 +5,7 @@
 #
 # Servizi:
 #   proxy        Caddy: HTTPS e unico punto esposto all'esterno
-#   watermarker  portale + motore, con LibreOffice e FFmpeg (immagine "full")
-#
-# Per spostare la conversione in PDF in un container separato vedi docker-compose.split.yml.
+#   watermarker  portale, API e motore di watermark (con FFmpeg per i video)
 
 name: watermarker
 
@@ -33,8 +31,7 @@ services:
   watermarker:
     build:
       context: .
-      target: full
-    image: watermarker:full
+    image: watermarker:latest
     restart: unless-stopped
     expose:
       - "8080"                      # raggiungibile solo dal proxy, non dall'esterno
@@ -44,7 +41,6 @@ services:
       Portal__MaxUploadMb: ${MAX_UPLOAD_MB:-100}
       Portal__MaxConcurrentJobs: ${MAX_CONCURRENT_JOBS:-2}
       Portal__QueueLimit: ${QUEUE_LIMIT:-20}
-      Portal__ConversionTimeoutSeconds: ${CONVERSION_TIMEOUT_SECONDS:-120}
       Portal__VideoTimeoutMinutes: ${VIDEO_TIMEOUT_MINUTES:-30}
       TZ: ${TZ:-Europe/Rome}        # per {date} e {time}
       # Login con Microsoft Entra ID (vuoti = login disattivato)

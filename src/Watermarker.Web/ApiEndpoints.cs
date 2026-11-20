@@ -30,7 +30,7 @@ public static class ApiEndpoints
         return r.ReadToEnd();
     });
 
-    private sealed record Submission(string FileName, IFormFile File, WatermarkOptions Options, OutputMode Mode, string? User);
+    private sealed record Submission(string FileName, IFormFile File, WatermarkOptions Options, string? User);
 
     // ------------------------------------------------------------------ autenticazione
 
@@ -131,8 +131,6 @@ public static class ApiEndpoints
                 allowUserOverride = s.AllowUserOverride,
             },
             native = engine.NativeExtensions,
-            pdf = engine.PdfExtensions,
-            converterAvailable = engine.Converter is not null,
             maxTextLength = portal.MaxTextLength,
             maxLines = WatermarkOptions.MaxLines,
             fonts = portal.EffectiveFonts,
@@ -166,11 +164,11 @@ public static class ApiEndpoints
                 await sub.File.CopyToAsync(fs, ct);
 
             var outcome = await Processing.RunAsync(engine, input, sub.FileName, Path.Combine(work, id + ".out"),
-                                                    sub.Options, sub.Mode, ct);
+                                                    sub.Options, ct);
 
             log.LogInformation(
-                "API watermark {Id}: {File} ({Size} bytes, {Format}, output {Mode}) for {Token}, user {User}, from {Client} in {Ms} ms, {Warnings} warnings",
-                id, sub.FileName, sub.File.Length, outcome.Format, sub.Mode, token.Name, sub.User ?? "-",
+                "API watermark {Id}: {File} ({Size} bytes, {Format}) for {Token}, user {User}, from {Client} in {Ms} ms, {Warnings} warnings",
+                id, sub.FileName, sub.File.Length, outcome.Format, token.Name, sub.User ?? "-",
                 http.Connection.RemoteIpAddress, sw.ElapsedMilliseconds, outcome.Warnings.Count);
 
             var h = http.Response.Headers;
@@ -243,11 +241,10 @@ public static class ApiEndpoints
             TokenName = token.Name,
             FileName = sub.FileName,
             InputBytes = sub.File.Length,
-            Output = sub.Mode == OutputMode.Pdf ? "pdf" : "original",
             User = sub.User,
             CreatedAt = DateTimeOffset.UtcNow,
         };
-        jobs.Enqueue(job, sub.Options, sub.Mode);
+        jobs.Enqueue(job, sub.Options);
 
         logs.CreateLogger(LogCategory).LogInformation(
             "API job {Id} queued: {File} ({Size} bytes) for {Token}, user {User}, from {Client}",
@@ -356,10 +353,10 @@ public static class ApiEndpoints
 
         var identity = new WatermarkIdentity(user ?? token.Name, email);
         if (!Processing.TryReadOptions(form, portal, fileName, identity, token.Settings.FixedText,
-                                       out var options, out var mode, out var error))
+                                       out var options, out var error))
             return (null, Processing.Problem(400, "Invalid settings", error));
 
-        return (new Submission(fileName, file, options, mode, user ?? email), null);
+        return (new Submission(fileName, file, options, user ?? email), null);
     }
 
     private static string? Limit(string? value, int max)

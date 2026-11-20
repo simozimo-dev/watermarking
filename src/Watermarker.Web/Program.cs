@@ -16,12 +16,8 @@ builder.Services.AddSingleton(portal);
 builder.Services.AddSingleton(_ => new WatermarkEngine(new EngineSettings
 {
     // Nella configurazione un valore null diventa stringa vuota: va trattata come "non impostato".
-    LibreOfficePath = NullIfEmpty(portal.LibreOfficePath),
     FfmpegPath = NullIfEmpty(portal.FfmpegPath),
-    ConverterUrl = NullIfEmpty(portal.ConverterUrl),
     WorkDirectory = NullIfEmpty(portal.WorkDirectory) ?? Path.Combine(Path.GetTempPath(), "watermarker"),
-    MaxParallelConversions = portal.MaxConcurrentJobs,
-    ConversionTimeout = TimeSpan.FromSeconds(portal.ConversionTimeoutSeconds),
     VideoTimeout = TimeSpan.FromMinutes(portal.VideoTimeoutMinutes),
 }));
 builder.Services.AddHostedService<JobCleanup>();
@@ -56,7 +52,7 @@ if (api.Enabled)
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = maxBodyBytes + 1024 * 1024);
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = maxBodyBytes);
 
-// Le elaborazioni sono pesanti (LibreOffice, FFmpeg): ne eseguiamo poche alla volta, le altre attendono in coda.
+// Le elaborazioni sono pesanti (documenti grandi, FFmpeg): ne eseguiamo poche alla volta, le altre attendono in coda.
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status503ServiceUnavailable;
@@ -109,8 +105,6 @@ app.MapGet("/healthz", () => Results.Text("ok"));
 app.MapGet("/api/capabilities", (WatermarkEngine engine, PortalOptions options) => Results.Ok(new
 {
     native = engine.NativeExtensions,
-    pdf = engine.PdfExtensions,
-    converterAvailable = engine.Converter is not null,
     maxUploadBytes = maxBodyBytes,
     maxTextLength = options.MaxTextLength,
     maxLines = WatermarkOptions.MaxLines,
@@ -171,7 +165,7 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
     // {user} ed {email} vengono dal token di Entra ID: l'utente non può falsificarli.
     var identity = new WatermarkIdentity(user?.Name, user?.Username);
     if (!Processing.TryReadOptions(form, options, file.FileName, identity, fixedText: null,
-                                   out var wmOptions, out var mode, out var error))
+                                   out var wmOptions, out var error))
         return Problem(400, "Invalid settings", error);
 
     var jobs = Path.Combine(engine.Settings.WorkDirectory, "jobs");
@@ -185,11 +179,11 @@ app.MapPost("/api/watermark", async (HttpContext http, WatermarkEngine engine, P
         await using (var fs = File.Create(input))
             await file.CopyToAsync(fs, ct);
 
-        var outcome = await Processing.RunAsync(engine, input, file.FileName, Path.Combine(jobs, id + ".out"), wmOptions, mode, ct);
+        var outcome = await Processing.RunAsync(engine, input, file.FileName, Path.Combine(jobs, id + ".out"), wmOptions, ct);
 
         log.LogInformation(
-            "Watermark applied: {File} ({Size} bytes, {Format}, output {Mode}) by {User} ({ObjectId}) from {Client} in {Ms} ms, {Warnings} warnings",
-            file.FileName, file.Length, outcome.Format, mode, user?.Username ?? "anonymous", user?.ObjectId,
+            "Watermark applied: {File} ({Size} bytes, {Format}) by {User} ({ObjectId}) from {Client} in {Ms} ms, {Warnings} warnings",
+            file.FileName, file.Length, outcome.Format, user?.Username ?? "anonymous", user?.ObjectId,
             http.Connection.RemoteIpAddress, sw.ElapsedMilliseconds, outcome.Warnings.Count);
 
         http.Response.Headers["X-Watermark-Id"] = id;

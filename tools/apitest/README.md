@@ -50,7 +50,7 @@ tra versioni, configurazioni del server o macchine diverse.
 
 ```
 python wmtest.py watermark contratto.docx --text "CONFIDENTIAL\n{user} {date}" -o contratto_wm.docx
-python wmtest.py watermark scansione.tif --pdf --opacity 0.25 --tile
+python wmtest.py watermark scansione.tif --opacity 0.25 --tile
 python wmtest.py job video.mp4 --text "INTERNAL" -o video_wm.mp4      # asincrono, attende e scarica
 python wmtest.py job grande.pptx --no-wait                              # mette in coda ed esce
 python wmtest.py jobs
@@ -75,7 +75,7 @@ python wmtest.py functional --include-limits        # anche i limiti al minuto e
 | Servizio | OpenAPI pubblica, capabilities del token |
 | Autenticazione | Nessun token, token malformato, segreto sbagliato → 401; header `X-Api-Key`; l'API admin non accetta i token; un token non vede i lavori di un altro |
 | Formati | Ogni file di `samples/`: formato valido in uscita, nome `_watermark`, testo del watermark presente dove il formato lo conserva (Word, PowerPoint, OpenDocument), immagini con le stesse dimensioni, allegati e contenuto degli ZIP marcati |
-| Conversione | Word, .doc, Excel, PowerPoint, ODT → PDF (se il server ha il convertitore) |
+| Formato mantenuto | `output=pdf` rifiutato (400), `output=original` ancora accettato, `.doc` rifiutato (415) con l'indicazione di salvarlo come `.docx` |
 | Opzioni | Più righe, segnaposto, Unicode, tutti i font, valori limite, ripetizione, slide PowerPoint, colori |
 | Validazione | Valori fuori intervallo, colore e font non validi, testo vuoto/troppo lungo/troppe righe, file mancante o vuoto → 400 |
 | Utente e testo fisso | `user`/`email` accettati o rifiutati secondo il token, `{user}` predefinito, testo fisso |
@@ -133,5 +133,5 @@ Codice di uscita: 0 se gli SLO sono rispettati, 2 se no, 1 per errori di esecuzi
 
 `samples/` contiene file piccoli e realistici di ogni formato: Word, Excel, PowerPoint,
 OpenDocument, PDF da 1 e 40 pagine, PNG, JPEG, un video MP4, una mail con allegati, uno ZIP
-e un `.doc` (convertibile solo in PDF). `make_samples.py` li rigenera; non serve per usare i test.
+e un `.doc` (non supportato: serve a verificare il rifiuto). `make_samples.py` li rigenera; non serve per usare i test.
 Per i KPI di carico i file vostri, con le dimensioni reali, danno numeri più significativi.

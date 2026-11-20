@@ -17,7 +17,7 @@
 
 	reverse_proxy watermarker:8080 {
 		transport http {
-			# Le conversioni e soprattutto i video possono richiedere minuti.
+			# I video e i documenti molto grandi possono richiedere minuti.
 			read_timeout 35m
 			write_timeout 35m
 		}

@@ -17,7 +17,6 @@ public sealed class ApiJob
 
     public string FileName { get; set; } = "";
     public long InputBytes { get; set; }
-    public string Output { get; set; } = "original";
     public string? User { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
@@ -49,7 +48,6 @@ public sealed class ApiJob
                 status = Status,
                 fileName = FileName,
                 inputBytes = InputBytes,
-                output = Output,
                 createdAt = CreatedAt,
                 startedAt = StartedAt,
                 completedAt = CompletedAt,
@@ -84,7 +82,7 @@ public sealed class ApiJobStore
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly ConcurrentDictionary<string, ApiJob> _jobs = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, (WatermarkOptions Options, OutputMode Mode)> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, WatermarkOptions> _pending = new(StringComparer.Ordinal);
     private readonly Channel<string> _queue = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleWriter = false });
     private readonly ILogger<ApiJobStore> _log;
 
@@ -129,21 +127,20 @@ public sealed class ApiJobStore
     public ApiJob? Get(string id, string tokenId) =>
         _jobs.TryGetValue(id, out var job) && job.TokenId == tokenId ? job : null;
 
-    public void Enqueue(ApiJob job, WatermarkOptions options, OutputMode mode)
+    public void Enqueue(ApiJob job, WatermarkOptions options)
     {
         _jobs[job.Id] = job;
-        _pending[job.Id] = (options, mode);
+        _pending[job.Id] = options;
         Save(job);
         _queue.Writer.TryWrite(job.Id);
     }
 
-    public bool TryTake(string id, out ApiJob job, out WatermarkOptions options, out OutputMode mode)
+    public bool TryTake(string id, out ApiJob job, out WatermarkOptions options)
     {
         options = null!;
-        mode = default;
         job = null!;
         if (!_pending.TryRemove(id, out var work) || !_jobs.TryGetValue(id, out var j)) return false;
-        (job, options, mode) = (j, work.Options, work.Mode);
+        (job, options) = (j, work);
         return true;
     }
 
@@ -212,14 +209,14 @@ public sealed class ApiJobWorker(ApiJobStore store, WatermarkEngine engine, ApiO
         {
             await foreach (var id in store.Queue.ReadAllAsync(stop))
             {
-                if (!store.TryTake(id, out var job, out var options, out var mode)) continue; // eliminato mentre era in coda
-                await Run(job, options, mode, stop);
+                if (!store.TryTake(id, out var job, out var options)) continue; // eliminato mentre era in coda
+                await Run(job, options, stop);
             }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
     }
 
-    private async Task Run(ApiJob job, WatermarkOptions options, OutputMode mode, CancellationToken stop)
+    private async Task Run(ApiJob job, WatermarkOptions options, CancellationToken stop)
     {
         var dir = store.DirectoryOf(job.Id);
         var input = Path.Combine(dir, "input");
@@ -234,7 +231,7 @@ public sealed class ApiJobWorker(ApiJobStore store, WatermarkEngine engine, ApiO
 
         try
         {
-            var outcome = await Processing.RunAsync(engine, input, job.FileName, Path.Combine(dir, "result"), options, mode, stop);
+            var outcome = await Processing.RunAsync(engine, input, job.FileName, Path.Combine(dir, "result"), options, stop);
             lock (job)
             {
                 job.Status = JobStatus.Succeeded;
@@ -250,8 +247,8 @@ public sealed class ApiJobWorker(ApiJobStore store, WatermarkEngine engine, ApiO
             store.Save(job);
 
             log.LogInformation(
-                "API job {Id} done: {File} ({Size} bytes, {Format}, output {Mode}) for {Token}, user {User}, in {Ms} ms, {Warnings} warnings",
-                job.Id, job.FileName, job.InputBytes, outcome.Format, mode, job.TokenName, job.User ?? "-",
+                "API job {Id} done: {File} ({Size} bytes, {Format}) for {Token}, user {User}, in {Ms} ms, {Warnings} warnings",
+                job.Id, job.FileName, job.InputBytes, outcome.Format, job.TokenName, job.User ?? "-",
                 sw.ElapsedMilliseconds, outcome.Warnings.Count);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)

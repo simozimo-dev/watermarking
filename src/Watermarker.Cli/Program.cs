@@ -15,11 +15,11 @@ internal static class Cli
             return args.Length == 0 ? UsageError : Ok;
         }
 
-        string? input = null, output = null, text = null, libreOffice = null, ffmpeg = null;
+        string? input = null, output = null, text = null, ffmpeg = null;
         double angle = 45, size = 60;
         double? opacity = null;
         string color = "#808080", font = "Arial";
-        bool tile = false, pptxSlides = false, toPdf = false, listFormats = false;
+        bool tile = false, pptxSlides = false, listFormats = false;
 
         try
         {
@@ -41,8 +41,6 @@ internal static class Cli
                     case "-f" or "--font": font = Next(); break;
                     case "--tile": tile = true; break;
                     case "--pptx-slides": pptxSlides = true; break;
-                    case "--to-pdf": toPdf = true; break;
-                    case "--libreoffice": libreOffice = Next(); break;
                     case "--ffmpeg": ffmpeg = Next(); break;
                     case "--formats": listFormats = true; break;
                     default:
@@ -67,7 +65,7 @@ internal static class Cli
             return UsageError;
         }
 
-        var engine = new WatermarkEngine(new EngineSettings { LibreOfficePath = libreOffice, FfmpegPath = ffmpeg });
+        var engine = new WatermarkEngine(new EngineSettings { FfmpegPath = ffmpeg });
 
         if (listFormats)
         {
@@ -92,15 +90,14 @@ internal static class Cli
                 PowerPointOnSlides = pptxSlides,
             };
 
-            var mode = toPdf ? OutputMode.Pdf : OutputMode.Original;
             var format = engine.Detect(input!);
             output ??= Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input!))!,
-                                    WatermarkEngine.SuggestOutputName(input!, format, mode));
+                                    WatermarkEngine.SuggestOutputName(input!, format));
 
-            var result = engine.Process(input!, output, options, mode);
+            var result = engine.Process(input!, output, options);
 
             foreach (var w in result.Warnings) Console.Error.WriteLine($"Warning: {w}");
-            Console.WriteLine($"Watermark applied ({result.Format.Description}{(result.ConvertedToPdf ? ", converted to PDF" : "")}): {output}");
+            Console.WriteLine($"Watermark applied ({result.Format.Description}): {output}");
             return Ok;
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException)
@@ -130,18 +127,8 @@ internal static class Cli
 
     private static void PrintFormats(WatermarkEngine engine)
     {
-        Console.WriteLine("Formats kept as they are:");
+        Console.WriteLine("Supported formats (the original format is always kept):");
         Console.WriteLine("  " + string.Join(" ", engine.NativeExtensions));
-        Console.WriteLine();
-        if (engine.Converter is null)
-        {
-            Console.WriteLine("PDF conversion: not available (LibreOffice not found, use --libreoffice <path>).");
-        }
-        else
-        {
-            Console.WriteLine($"PDF conversion with --to-pdf ({engine.Converter.Description}):");
-            Console.WriteLine("  " + string.Join(" ", engine.PdfExtensions));
-        }
         if (!engine.NativeExtensions.Contains(".mp4"))
             Console.WriteLine("\nVideos: not available (FFmpeg not found, use --ffmpeg <path>).");
     }
@@ -167,15 +154,13 @@ internal static class Cli
               -f, --font <font>      Font family or path to a .ttf/.otf file (default: Arial)
                   --tile             PDF, XPS, images and videos: repeat the watermark in a grid
                   --pptx-slides      PowerPoint: also place the watermark on top of each slide
-                  --to-pdf           Convert to PDF (with LibreOffice), then apply the watermark
-                  --libreoffice <p>  Path to soffice, if it is not found automatically
                   --ffmpeg <p>       Path to ffmpeg, if it is not found automatically
                   --formats          List the formats available on this machine
               -h, --help             Show this help
 
             Examples:
               watermark contract.docx -t "CONFIDENTIAL\n{user} - {date}" -a 30 -s 54 -c "#C00000"
-              watermark legacy.doc -t "CONTROLLED COPY" --to-pdf
+              watermark drawing.pdf -t "CONTROLLED COPY" --tile --opacity 0.2
             """);
     }
 }

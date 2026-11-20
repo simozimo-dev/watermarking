@@ -63,7 +63,6 @@ def add_watermark_options(p: argparse.ArgumentParser) -> None:
     g.add_argument("--color", help="#RRGGBB")
     g.add_argument("--opacity", type=float, help="0.05 - 1")
     g.add_argument("--font")
-    g.add_argument("--pdf", action="store_true", help="Convert to PDF first")
     g.add_argument("--tile", action="store_true", help="Repeat across the page")
     g.add_argument("--slides", action="store_true", help="PowerPoint: also on top of each slide")
     g.add_argument("--user", help="End user for {user} (only if the token allows it)")
@@ -73,7 +72,7 @@ def add_watermark_options(p: argparse.ArgumentParser) -> None:
 def wm_options(a: argparse.Namespace) -> Dict[str, Any]:
     text = a.text.replace("\\n", "\n") if a.text else None
     return options_to_fields(text=text, angle=a.angle, size=a.size, color=a.color, opacity=a.opacity, font=a.font,
-                             output="pdf" if a.pdf else None, tile=True if a.tile else None,
+                             tile=True if a.tile else None,
                              pptx_slides=True if a.slides else None, user=a.user, email=a.email)
 
 
@@ -312,7 +311,6 @@ def cmd_report(a: argparse.Namespace) -> int:
 def meta(a: argparse.Namespace, caps: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     tok = (caps or {}).get("token", {})
     return {"service": a.url, "token": tok.get("name"), "date": f"{datetime.now():%Y-%m-%d %H:%M}",
-            "converter": "yes" if (caps or {}).get("converterAvailable") else "no",
             "client": platform.node()}
 
 

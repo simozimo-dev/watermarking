@@ -91,12 +91,3 @@ public sealed record WatermarkResult(IReadOnlyList<string> Warnings)
     public static WatermarkResult None { get; } = new(Array.Empty<string>());
 }
 
-/// <summary>Formato del file prodotto.</summary>
-public enum OutputMode
-{
-    /// <summary>Stesso formato del file caricato.</summary>
-    Original,
-
-    /// <summary>Conversione in PDF (tramite LibreOffice) e poi watermark.</summary>
-    Pdf,
-}

@@ -51,6 +51,8 @@ class FunctionalSuite:
         self.url, self.token, self.token2 = url, token, token2
         self.insecure = insecure
         self.c = WatermarkClient(url, token, timeout=timeout, insecure=insecure)
+        self.respect_rate_limit = True
+        self._wrap_rate_limit(self.c)
         self.samples_dir = samples
         self.include_limits = include_limits
         self.max_generate_mb = max_generate_mb
@@ -63,7 +65,28 @@ class FunctionalSuite:
     # ------------------------------------------------------------------ infrastruttura
 
     def client(self, **kw: Any) -> WatermarkClient:
-        return WatermarkClient(self.url, kw.pop("token", self.token), insecure=self.insecure, **kw)
+        return self._wrap_rate_limit(WatermarkClient(self.url, kw.pop("token", self.token), insecure=self.insecure, **kw))
+
+    def _wrap_rate_limit(self, client: WatermarkClient) -> WatermarkClient:
+        """
+        Con un token a basso limite (es. 60/min) la suite supera il limite: invece di segnare
+        come falliti i test successivi, si attende il Retry-After e si ripete la richiesta.
+        I test dei limiti (LIM-03/04) disattivano questo comportamento.
+        """
+        original = client.request
+
+        def request(*args: Any, **kwargs: Any) -> Response:
+            for _ in range(3):
+                resp = original(*args, **kwargs)
+                if resp.status != 429 or not self.respect_rate_limit:
+                    return resp
+                wait = min(65, int(resp.header("retry-after") or 5))
+                self.log(f"             token limit reached (429): waiting {wait}s before retrying")
+                time.sleep(wait + 1)
+            return resp
+
+        client.request = request  # type: ignore[method-assign]
+        return client
 
     def sample(self, name: str) -> bytes:
         if name not in self.samples:
@@ -88,6 +111,8 @@ class FunctionalSuite:
         except Exception as e:  # noqa: BLE001 - un errore imprevisto è un test fallito
             r.status, r.message = FAIL, f"{type(e).__name__}: {e}"
             r.details.append(traceback.format_exc(limit=3))
+        finally:
+            self.respect_rate_limit = True
         r.duration = time.perf_counter() - t0
         self.results.append(r)
         icon = {PASS: "PASS", FAIL: "FAIL", WARN: "WARN", SKIP: "skip"}[r.status]
@@ -139,6 +164,10 @@ class FunctionalSuite:
         if not self.caps:
             self.log("Cannot read the capabilities: the other tests are skipped.")
             return self.results
+        rpm = int(self.tok.get("requestsPerMinute") or 0)
+        if 0 < rpm < 300:
+            self.log(f"Note: the token allows {rpm} requests/min: the suite will pause when it reaches the limit. "
+                     "Use a token with a higher limit (e.g. 10000) for faster runs.")
 
         self.log("Authentication")
         self.case("AUTH-01", "auth", "Request without token is rejected (401)", self.t_no_token)
@@ -150,13 +179,14 @@ class FunctionalSuite:
 
         self.log("Formats (synchronous, original format)")
         for p in sorted(self.samples_dir.iterdir()):
-            if p.is_file() and not p.name.startswith("."):
+            # I file "_watermark" sono risultati di prove precedenti, non campioni.
+            if p.is_file() and not p.name.startswith(".") and "_watermark" not in p.stem:
                 self.case(f"FMT-{p.stem[:8].upper()}", "formats", f"{p.name}", lambda r, p=p: self.t_format(r, p))
 
-        self.log("Conversion to PDF")
-        for name in ["memo.docx", "legacy.doc", "budget.xlsx", "deck.pptx", "letter.odt"]:
-            self.case(f"PDF-{ext_of(name)[1:].upper()}", "conversion", f"{name} -> PDF",
-                      lambda r, n=name: self.t_to_pdf(r, n))
+        self.log("Format always kept (no PDF conversion)")
+        self.case("KEEP-01", "format", "output=pdf is rejected (400)", self.t_pdf_rejected)
+        self.case("KEEP-02", "format", "output=original is still accepted", self.t_original_accepted)
+        self.case("KEEP-03", "format", "Legacy .doc rejected with a hint (415)", self.t_legacy_hint)
 
         self.log("Watermark options")
         self.case("OPT-01", "options", "Multi-line text, every line present", self.t_multiline)
@@ -228,8 +258,7 @@ class FunctionalSuite:
         resp = self.expect(self.c.request("GET", "/api/v1/capabilities"), r, 200)
         self.caps = resp.json()
         t = self.tok
-        return (f"token '{t.get('name')}', {len(self.native)} native formats, converter "
-                f"{'on' if self.caps.get('converterAvailable') else 'off'}, "
+        return (f"token '{t.get('name')}', {len(self.native)} formats, "
                 f"{t.get('requestsPerMinute')}/min, max {t.get('maxUploadBytes', 0) // 1048576} MB")
 
     def t_no_token(self, r: CaseResult) -> None:
@@ -252,6 +281,10 @@ class FunctionalSuite:
         self.expect(c.request("GET", "/api/v1/capabilities"), r, 200)
 
     def t_admin_forbidden(self, r: CaseResult) -> None:
+        # Senza login (ambiente Development) l'API admin è aperta per scelta: il test non è significativo.
+        me = self.c.request("GET", "/api/me", auth=False)
+        if me.status == 200 and isinstance(me.json(), dict) and me.json().get("authEnabled") is False:
+            raise Skip("sign-in is disabled on the server (development mode): the admin API is open by design")
         resp = self.c.request("GET", "/api/admin/tokens")
         r.http_status = resp.status
         if resp.status == 200:
@@ -289,9 +322,8 @@ class FunctionalSuite:
 
         if ext not in self.native:
             if resp.status == 415:
-                hint = "convertible to PDF" if ext in [e.lower() for e in self.caps.get("pdf", [])] else "not supported"
-                return f"original format not kept, as expected ({hint})"
-            raise Fail(f"{ext} is not a native format: expected 415, got {resp.status}")
+                return f"not supported, as expected: {resp.problem().get('detail', '')}"
+            raise Fail(f"{ext} is not supported: expected 415, got {resp.status}")
 
         self.expect(resp, r, 200)
         out_name = resp.filename or ""
@@ -306,19 +338,25 @@ class FunctionalSuite:
         return (f"{len(data):,} -> {len(resp.body):,} bytes in {resp.timing.done:.2f}s, {verified}"
                 + (f", warnings: {'; '.join(warns)}" if warns else ""))
 
-    def t_to_pdf(self, r: CaseResult, name: str) -> str:
+    def t_pdf_rejected(self, r: CaseResult) -> str:
         self.need_sync()
-        if not self.caps.get("converterAvailable"):
-            raise Skip("no PDF converter on the server")
-        ext = ext_of(name)
-        if ext not in [e.lower() for e in self.caps.get("pdf", [])]:
-            raise Skip(f"{ext} cannot be converted on this server")
-        data = self.sample(name)
-        resp = self.expect(self.sync(name, data, output="pdf", **self.opts), r, 200)
-        problems = check_output(name, data, resp.filename or "x.pdf", resp.body, expect_pdf=True)
-        if problems:
-            raise Fail("; ".join(problems))
-        return f"{len(resp.body):,} bytes in {resp.timing.done:.2f}s"
+        resp = self.expect(self.sync("memo.docx", self.sample("memo.docx"), output="pdf", **self.opts), r, 400)
+        return resp.problem().get("detail", "")
+
+    def t_original_accepted(self, r: CaseResult) -> str:
+        self.need_sync()
+        resp = self.expect(self.sync("memo.docx", self.sample("memo.docx"), output="original", **self.opts), r, 200)
+        if not (resp.filename or "").endswith(".docx"):
+            raise Fail(f"unexpected output name '{resp.filename}'")
+        return f"output: {resp.filename}"
+
+    def t_legacy_hint(self, r: CaseResult) -> str:
+        self.need_sync()
+        resp = self.expect(self.sync("legacy.doc", self.sample("legacy.doc"), **self.opts), r, 415)
+        detail = resp.problem().get("detail", "")
+        if ".docx" not in detail:
+            raise Warn(f"415 without a hint to save as .docx: {detail}")
+        return detail
 
     # ------------------------------------------------------------------ opzioni
 
@@ -630,6 +668,7 @@ class FunctionalSuite:
     def t_job_parallel(self, r: CaseResult) -> str:
         self.need_async()
         limit = int(self.tok.get("maxActiveJobs") or 5)
+        self.respect_rate_limit = False
         n = max(1, min(4, limit))
         names = ["memo.docx", "onepage.pdf", "scan.png", "budget.xlsx"][:n]
         ids = [self._create(r, nm, self.sample(nm))["id"] for nm in names]
@@ -680,6 +719,7 @@ class FunctionalSuite:
         rpm = int(self.tok.get("requestsPerMinute") or 60)
         if rpm > 200:
             raise Skip(f"{rpm}/min is too high to test quickly")
+        self.respect_rate_limit = False
         # I test precedenti hanno già consumato parte del minuto: si invia finché arriva il 429.
         for i in range(rpm + 1):
             resp = self.sync("onepage.pdf", self.sample("onepage.pdf"), **self.opts)

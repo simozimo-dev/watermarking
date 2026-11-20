@@ -12,7 +12,7 @@ const els = {
   status: $("status"), canvas: $("canvas"), caption: $("preview-caption"), user: $("user"),
 };
 
-let caps = { native: [], pdf: [], converterAvailable: false, maxUploadBytes: 100 * 1024 * 1024, fonts: ["Arial"], maxFiles: 20 };
+let caps = { native: [], maxUploadBytes: 100 * 1024 * 1024, fonts: ["Arial"], maxFiles: 20 };
 let me = { authEnabled: false };
 
 /** File selezionati: { id, file, status, warnings, error, result: { blob, name } } */
@@ -53,16 +53,10 @@ async function init() {
   const saved = readSettings();
   if (saved?.font && caps.fonts.includes(saved.font)) els.font.value = saved.font;
   els.text.maxLength = caps.maxTextLength || 200;
-  els.file.accept = [...new Set([...caps.native, ...caps.pdf])].join(",");
+  els.file.accept = caps.native.join(",");
   els.dropHint.textContent =
     `Documents, PDFs, images, ZIP archives, emails${caps.native.includes(".mp4") ? " and videos" : ""}` +
     ` · up to ${caps.maxFiles} files, ${formatBytes(caps.maxUploadBytes)} each`;
-  if (!caps.converterAvailable) {
-    const pdf = els.form.querySelector('input[name="output"][value="pdf"]');
-    pdf.disabled = true;
-    pdf.closest(".choice").title = "PDF conversion is not enabled on this server";
-  }
-
   updateOutputs();
   refresh();
 }
@@ -77,7 +71,6 @@ function bindEvents() {
     b.addEventListener("click", () => { els.color.value = b.dataset.color; selectSwatch(b.dataset.color); draw(); saveSettings(); }));
 
   document.querySelectorAll(".token").forEach((b) => b.addEventListener("click", () => insertToken(b.dataset.token)));
-  els.form.querySelectorAll('input[name="output"]').forEach((r) => r.addEventListener("change", refresh));
 
   els.file.addEventListener("change", () => { addFiles(els.file.files); els.file.value = ""; });
   for (const type of ["dragenter", "dragover"]) {
@@ -224,30 +217,15 @@ function selectedEntry() {
   return files.find((f) => f.id === selectedId) ?? null;
 }
 
-function selectedOutput() {
-  return els.form.querySelector('input[name="output"]:checked')?.value ?? "original";
-}
-
 /**
- * Come verrà elaborato un file, in base al formato e alla scelta "stesso formato / PDF".
- * Restituisce { mode: "original" | "pdf" | null, note, warn }.
+ * Se un file può essere elaborato: il formato viene sempre mantenuto.
+ * Restituisce { mode: "original" | null, note, warn }.
  */
 function planFor(entry) {
   const ext = extensionOf(entry.file.name);
-  const native = caps.native.includes(ext);
-  const pdf = caps.pdf.includes(ext) && caps.converterAvailable || ext === ".pdf";
-  const wanted = selectedOutput();
-
   if (entry.file.size > caps.maxUploadBytes) return { mode: null, note: `Larger than ${formatBytes(caps.maxUploadBytes)}`, warn: true };
-  if (!ext) return { mode: wanted, note: "Format detected from content", warn: false };
-
-  if (wanted === "pdf") {
-    if (pdf) return { mode: "pdf", note: ext === ".pdf" ? "" : "Converted to PDF", warn: false };
-    if (native) return { mode: "original", note: "Cannot be converted: format kept", warn: false };
-  } else {
-    if (native) return { mode: "original", note: "", warn: false };
-    if (pdf) return { mode: "pdf", note: "Format not editable: converted to PDF", warn: false };
-  }
+  if (!ext) return { mode: "original", note: "Format detected from content", warn: false };
+  if (caps.native.includes(ext)) return { mode: "original", note: "", warn: false };
   return { mode: null, note: `${ext} files are not supported`, warn: true };
 }
 
@@ -256,10 +234,9 @@ function refresh() {
   renderFiles();
 
   const exts = files.map((f) => extensionOf(f.file.name));
-  const output = selectedOutput();
   const anyTileable = exts.some((e) => KINDS.tileable.includes(e) || KINDS.image.includes(e) || KINDS.video.includes(e));
-  els.tileRow.hidden = !(files.length === 0 || output === "pdf" || anyTileable);
-  els.slidesRow.hidden = !(output === "original" && exts.some((e) => KINDS.slide.includes(e) && caps.native.includes(e)));
+  els.tileRow.hidden = !(files.length === 0 || anyTileable);
+  els.slidesRow.hidden = !exts.some((e) => KINDS.slide.includes(e) && caps.native.includes(e));
 
   const runnable = files.filter((f) => f.status !== "done" && planFor(f).mode);
   const retry = runnable.length > 0 && runnable.every((f) => f.status === "error");
@@ -381,13 +358,10 @@ function textLines() {
 function sheetFormat() {
   const entry = selectedEntry();
   const ext = entry ? extensionOf(entry.file.name) : "";
-  const mode = entry ? planFor(entry).mode : selectedOutput();
   if (previewImage) return { w: previewImage.naturalWidth, h: previewImage.naturalHeight, kind: "image" };
-  if (mode !== "pdf") {
-    if (KINDS.slide.includes(ext)) return { w: 960, h: 540, kind: "slide" };
-    if (KINDS.video.includes(ext)) return { w: 960, h: 540, kind: "video" };
-    if (KINDS.sheet.includes(ext)) return { w: 842, h: 595, kind: "sheet" };
-  }
+  if (KINDS.slide.includes(ext)) return { w: 960, h: 540, kind: "slide" };
+  if (KINDS.video.includes(ext)) return { w: 960, h: 540, kind: "video" };
+  if (KINDS.sheet.includes(ext)) return { w: 842, h: 595, kind: "sheet" };
   return { w: 595, h: 842, kind: "page" };
 }
 
@@ -569,7 +543,6 @@ function processOne(entry, mode, onProgress) {
     data.append("opacity", String(Number(els.opacity.value) / 100));
     data.append("color", els.color.value);
     data.append("font", els.font.value);
-    data.append("output", mode);
     data.append("tile", String(!els.tileRow.hidden && els.tile.checked));
     data.append("pptxSlides", String(!els.slidesRow.hidden && els.slides.checked));
 

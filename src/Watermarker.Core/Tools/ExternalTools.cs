@@ -2,11 +2,11 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace Watermarker.Core.Conversion;
+namespace Watermarker.Core.Tools;
 
 public sealed record ProcessOutput(int ExitCode, string StdOut, string StdErr);
 
-/// <summary>Esecuzione di programmi esterni (LibreOffice, FFmpeg) con timeout e terminazione garantita.</summary>
+/// <summary>Esecuzione di programmi esterni (FFmpeg) con timeout e terminazione garantita.</summary>
 internal static class ProcessRunner
 {
     public static ProcessOutput Run(string fileName, IEnumerable<string> arguments, TimeSpan timeout, string? workingDirectory = null)
@@ -46,19 +46,6 @@ internal static class ProcessRunner
 public static class ToolLocator
 {
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-
-    public static string? FindLibreOffice(string? configured) => Find(configured, "soffice",
-        IsWindows
-            ? [
-                @"C:\Program Files\LibreOffice\program\soffice.exe",
-                @"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-              ]
-            : [
-                "/usr/bin/soffice",
-                "/usr/lib/libreoffice/program/soffice",
-                "/opt/libreoffice/program/soffice",
-                "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-              ]);
 
     public static string? FindFfmpeg(string? configured) => Find(configured, "ffmpeg",
         IsWindows ? [@"C:\ffmpeg\bin\ffmpeg.exe"] : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg"]);

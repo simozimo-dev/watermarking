@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -10,17 +10,21 @@
 
   <ItemGroup>
     <!-- PDF: lettura/scrittura a basso livello (MIT) -->
-    <PackageReference Include="PDFsharp" Version="6.2.0" />
+    <!-- Bloccato a 6.2.4, l'ultima versione con licenza MIT. Dalla 6.5.0 PDFsharp è AGPL o commerciale
+         e verifica la licenza a runtime: senza chiamare PdfSharpLicense.SetAgplLicense() (che renderebbe
+         AGPL anche questo servizio) o caricare una licenza commerciale, ogni apertura di PDF fallisce.
+         Non aggiornare senza una decisione sulla licenza. -->
+    <PackageReference Include="PDFsharp" Version="[6.2.4]" />
     <!-- Word / Excel / PowerPoint (MIT) -->
-    <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
     <!-- Contorni dei glifi e rendering dei livelli trasparenti (MIT) -->
     <PackageReference Include="SkiaSharp" Version="3.116.1" />
     <!-- Librerie native per Linux; su Windows/macOS sono già incluse in SkiaSharp -->
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.116.1" />
     <!-- Immagini: lettura/scrittura di PNG, JPEG, TIFF multipagina, GIF/WebP animati (Apache 2.0) -->
-    <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="14.4.0" />
+    <PackageReference Include="Magick.NET-Q8-AnyCPU" Version="15.1.0" />
     <!-- Email .eml (MIT) -->
-    <PackageReference Include="MimeKit" Version="4.9.0" />
+    <PackageReference Include="MimeKit" Version="5.0.0" />
   </ItemGroup>
 
 </Project>

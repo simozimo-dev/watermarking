@@ -18,9 +18,7 @@ public enum FormatFamily
     Video,
     Zip,
     Email,
-    /// <summary>Formati gestiti solo tramite conversione in PDF (doc, xls, ppt, rtf, txt, csv, dxf, svg...).</summary>
-    ConvertibleOnly,
-    /// <summary>Formati riconosciuti ma non gestiti (msg, xlsb...).</summary>
+    /// <summary>Formati riconosciuti ma non gestiti (doc, xls, ppt, msg, xlsb, rtf, txt...).</summary>
     Unsupported,
 }
 
@@ -30,12 +28,14 @@ public enum FormatFamily
 /// <param name="Extension">Estensione con cui trattare il file (minuscola, con il punto).</param>
 /// <param name="ExtensionMismatch">L'estensione del nome non corrisponde al contenuto.</param>
 /// <param name="HasDigitalSignature">Il file contiene una firma digitale che la modifica invaliderà.</param>
+/// <param name="Hint">Per i formati non supportati: cosa può fare l'utente (es. salvarlo in un formato recente).</param>
 public sealed record DetectedFormat(
     FormatFamily Family,
     string Extension,
     string Description,
     bool ExtensionMismatch = false,
-    bool HasDigitalSignature = false);
+    bool HasDigitalSignature = false,
+    string? Hint = null);
 
 /// <summary>
 /// Riconosce il formato leggendo i primi byte e, per i pacchetti ZIP, la struttura interna.
@@ -43,7 +43,7 @@ public sealed record DetectedFormat(
 /// </summary>
 public static class FormatDetector
 {
-    private static readonly string[] TextLikeConvertible = [".txt", ".csv", ".htm", ".html"];
+    private static readonly string[] TextLike = [".txt", ".csv", ".htm", ".html"];
 
     public static DetectedFormat Detect(string path, string? originalName = null)
     {
@@ -98,7 +98,7 @@ public static class FormatDetector
             return new(FormatFamily.Video, ext == ".webm" ? ".webm" : ".mkv", "Matroska/WebM video");
 
         if (StartsWith(head, @"{\rtf"u8))
-            return new(FormatFamily.ConvertibleOnly, ".rtf", "Rich Text Format");
+            return new(FormatFamily.Unsupported, ".rtf", "Rich Text Format", Hint: SaveAsHint(".docx"));
 
         // Da qui in poi formati testuali: ci affidiamo all'estensione, verificando che non sia binario.
         if (LooksBinary(head))
@@ -107,9 +107,9 @@ public static class FormatDetector
         return ext switch
         {
             ".eml" => new(FormatFamily.Email, ".eml", "Email (EML)"),
-            ".svg" => new(FormatFamily.ConvertibleOnly, ".svg", "SVG vector image"),
-            ".dxf" => new(FormatFamily.ConvertibleOnly, ".dxf", "DXF CAD drawing"),
-            _ when TextLikeConvertible.Contains(ext) => new(FormatFamily.ConvertibleOnly, ext, "Text file"),
+            ".svg" => new(FormatFamily.Unsupported, ".svg", "SVG vector image", Hint: "Export it as PNG or PDF."),
+            ".dxf" => new(FormatFamily.Unsupported, ".dxf", "DXF CAD drawing", Hint: "Export the drawing as PDF."),
+            _ when TextLike.Contains(ext) => new(FormatFamily.Unsupported, ext, "Text file", Hint: "Save it as .docx or PDF."),
             _ => new(FormatFamily.Unknown, ext, "Unrecognized format"),
         };
     }
@@ -162,7 +162,7 @@ public static class FormatDetector
             "spreadsheet-template" => new(FormatFamily.OpenDocument, ".ots", "OpenDocument spreadsheet template"),
             "presentation" => new(FormatFamily.OpenDocument, ".odp", "OpenDocument presentation"),
             "presentation-template" => new(FormatFamily.OpenDocument, ".otp", "OpenDocument presentation template"),
-            "graphics" => new(FormatFamily.ConvertibleOnly, ".odg", "OpenDocument drawing"),
+            "graphics" => new(FormatFamily.Unsupported, ".odg", "OpenDocument drawing", Hint: "Export it as PDF."),
             _ => new(FormatFamily.Unsupported, ext, $"OpenDocument ({mime})"),
         };
     }
@@ -260,15 +260,17 @@ public static class FormatDetector
 
     private static DetectedFormat DetectOle(string ext) => ext switch
     {
-        ".doc" or ".dot" => new(FormatFamily.ConvertibleOnly, ext, "Word 97-2003 document"),
-        ".xls" or ".xlt" => new(FormatFamily.ConvertibleOnly, ext, "Excel 97-2003 workbook"),
-        ".ppt" or ".pot" or ".pps" => new(FormatFamily.ConvertibleOnly, ext, "PowerPoint 97-2003 presentation"),
-        ".vsd" or ".vst" => new(FormatFamily.ConvertibleOnly, ext, "Visio 2003-2010 drawing"),
+        ".doc" or ".dot" => new(FormatFamily.Unsupported, ext, "Word 97-2003 document", Hint: SaveAsHint(".docx")),
+        ".xls" or ".xlt" => new(FormatFamily.Unsupported, ext, "Excel 97-2003 workbook", Hint: SaveAsHint(".xlsx")),
+        ".ppt" or ".pot" or ".pps" => new(FormatFamily.Unsupported, ext, "PowerPoint 97-2003 presentation", Hint: SaveAsHint(".pptx")),
+        ".vsd" or ".vst" => new(FormatFamily.Unsupported, ext, "Visio 2003-2010 drawing", Hint: SaveAsHint(".vsdx")),
         ".msg" => new(FormatFamily.Unsupported, ".msg", "Outlook message (.msg)"),
         _ => new(FormatFamily.Unsupported, ext, "Unrecognized Office 97-2003 file"),
     };
 
     // ------------------------------------------------------------------ utilità
+
+    private static string SaveAsHint(string ext) => $"Save it as {ext} and try again.";
 
     /// <summary>Estensioni considerate equivalenti per lo stesso contenuto (es. .jpg/.jpeg).</summary>
     private static bool SameFamilyExtension(DetectedFormat f, string nameExt)

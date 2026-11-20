@@ -28,11 +28,7 @@ public sealed class PortalOptions
     public IReadOnlyList<string> EffectiveFonts =>
         Fonts.Count > 0 ? Fonts.Distinct().ToList() : ["Arial", "Calibri", "Verdana", "Times New Roman", "Courier New"];
 
-    public string? LibreOfficePath { get; set; }
     public string? FfmpegPath { get; set; }
-
-    /// <summary>URL del servizio di conversione Gotenberg. Se vuoto si usa LibreOffice installato localmente.</summary>
-    public string? ConverterUrl { get; set; }
 
     /// <summary>Cartella per i file temporanei. Default: cartella temporanea di sistema.</summary>
     public string? WorkDirectory { get; set; }
@@ -58,6 +54,5 @@ public sealed class PortalOptions
     /// <summary>Cartella persistente per le chiavi che proteggono i cookie di sessione.</summary>
     public string? DataProtectionPath { get; set; }
 
-    public int ConversionTimeoutSeconds { get; set; } = 120;
     public int VideoTimeoutMinutes { get; set; } = 30;
 }

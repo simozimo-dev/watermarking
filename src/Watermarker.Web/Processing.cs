@@ -29,10 +29,9 @@ public static class Processing
     /// </summary>
     public static bool TryReadOptions(IFormCollection form, PortalOptions portal, string fileName,
                                       WatermarkIdentity identity, string? fixedText,
-                                      out WatermarkOptions options, out OutputMode mode, out string error)
+                                      out WatermarkOptions options, out string error)
     {
         options = null!;
-        mode = OutputMode.Original;
         error = "";
 
         // Testo su più righe: a capo normalizzati, righe vuote ignorate.
@@ -58,11 +57,11 @@ public static class Processing
         var match = fonts.FirstOrDefault(f => string.Equals(f, font, StringComparison.OrdinalIgnoreCase));
         if (match is null) { error = $"Font not available. Choose one of: {string.Join(", ", fonts)}."; return false; }
 
+        // La conversione in PDF è stata rimossa: il file mantiene sempre il proprio formato.
+        // "output=original" è ancora accettato per compatibilità con i client esistenti.
         var output = form["output"].ToString();
-        if (output.Length > 0 && !output.Equals("original", StringComparison.OrdinalIgnoreCase)
-                              && !output.Equals("pdf", StringComparison.OrdinalIgnoreCase))
-        { error = "Invalid output: use \"original\" or \"pdf\"."; return false; }
-        mode = output.Equals("pdf", StringComparison.OrdinalIgnoreCase) ? OutputMode.Pdf : OutputMode.Original;
+        if (output.Length > 0 && !output.Equals("original", StringComparison.OrdinalIgnoreCase))
+        { error = "PDF conversion is no longer available: the file always keeps its original format."; return false; }
 
         var expanded = TextTemplate.Expand(text, fileName, identity.Name, email: identity.Email);
         if (expanded.Length == 0) { error = "The watermark text is empty after replacing the placeholders."; return false; }
@@ -82,17 +81,16 @@ public static class Processing
 
     /// <summary>
     /// Riconosce il formato e applica il watermark. Il file prodotto è
-    /// <paramref name="outputBase"/> più l'estensione del formato di uscita.
+    /// <paramref name="outputBase"/> più l'estensione del formato.
     /// </summary>
     public static async Task<ProcessingOutcome> RunAsync(WatermarkEngine engine, string inputPath, string originalName,
-                                                         string outputBase, WatermarkOptions options, OutputMode mode,
-                                                         CancellationToken ct)
+                                                         string outputBase, WatermarkOptions options, CancellationToken ct)
     {
         var format = engine.Detect(inputPath, originalName);
-        var downloadName = WatermarkEngine.SuggestOutputName(originalName, format, mode);
+        var downloadName = WatermarkEngine.SuggestOutputName(originalName, format);
         var output = outputBase + Path.GetExtension(downloadName);
 
-        var result = await Task.Run(() => engine.Process(inputPath, output, options, mode, originalName), ct);
+        var result = await Task.Run(() => engine.Process(inputPath, output, options, originalName), ct);
         return new ProcessingOutcome(output, downloadName, ContentType(downloadName), format.Description, result.Warnings);
     }
 

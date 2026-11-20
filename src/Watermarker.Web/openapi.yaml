@@ -4,6 +4,7 @@ info:
   version: "1.0"
   description: |
     Applies a text watermark to Office documents, PDFs, images, archives, emails and videos.
+    The file always keeps its original format.
 
     Every request (except this description) needs an API token issued by the portal administrator:
 
@@ -57,7 +58,7 @@ paths:
               description: Detected format (URL-encoded).
               schema: { type: string }
             X-Watermark-Warnings:
-              description: Base64 of a JSON array of strings (notes such as "converted to PDF").
+              description: Base64 of a JSON array of strings (e.g. "the digital signature is no longer valid").
               schema: { type: string }
             X-Watermark-Warning-Count:
               schema: { type: integer }
@@ -200,11 +201,6 @@ components:
         color: { type: string, default: "#808080", example: "#C00000" }
         opacity: { type: number, minimum: 0.05, maximum: 1, default: 0.35 }
         font: { type: string, description: One of the fonts listed in /capabilities. Default is the first. }
-        output:
-          type: string
-          enum: [original, pdf]
-          default: original
-          description: Keep the original format or convert to PDF first.
         tile: { type: boolean, default: false, description: Repeat the watermark across the page }
         pptxSlides: { type: boolean, default: false, description: "PowerPoint: also place it on top of each slide" }
         user:
@@ -222,7 +218,6 @@ components:
         status: { type: string, enum: [queued, running, succeeded, failed] }
         fileName: { type: string }
         inputBytes: { type: integer }
-        output: { type: string, enum: [original, pdf] }
         createdAt: { type: string, format: date-time }
         startedAt: { type: string, format: date-time, nullable: true }
         completedAt: { type: string, format: date-time, nullable: true }
@@ -261,9 +256,7 @@ components:
             maxActiveJobs: { type: integer }
             fixedText: { type: boolean, description: The text is set by the administrator }
             allowUserOverride: { type: boolean }
-        native: { type: array, items: { type: string }, description: Extensions watermarked in their own format }
-        pdf: { type: array, items: { type: string }, description: Extensions that can be converted to PDF }
-        converterAvailable: { type: boolean }
+        native: { type: array, items: { type: string }, description: Supported extensions (the format is always kept) }
         maxTextLength: { type: integer }
         maxLines: { type: integer }
         fonts: { type: array, items: { type: string } }
